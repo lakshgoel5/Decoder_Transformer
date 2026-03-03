@@ -35,17 +35,18 @@ def run_model(model: nn.Module, input_ids: List[torch.Tensor], vocab_size: int) 
         },.....
     ]
     """
+    # Device setup
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    model.eval()
-    model.to(device)
+    model.eval() # Set model to evaluation mode. Turns off backpropagation and dropout
+    model.to(device) # Move model to GPU
 
     outputs = []
-    bsz = 16
+    bsz = 16 # Batch size
     for st in range(0, len(input_ids), bsz):
-        en = min(st + bsz, len(input_ids))
+        en = min(st + bsz, len(input_ids)) # End of batch
         batch = {
             "input_ids": [input_ids[i] for i in range(st, en)],
             "attention_mask": [torch.ones_like(input_ids[i]) for i in range(st, en)]

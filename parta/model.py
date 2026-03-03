@@ -25,7 +25,37 @@ class LanguageModel(nn.Module):
         Parameters:
             - weights: A dictionary containing the model's weights. The structure of this dictionary will depend on how you design your model.
         """
-        raise NotImplementedError("Implement set_weights as described in assignment document")
+        # raise NotImplementedError("Implement set_weights as described in assignment document")
+        # Both layers and heads 1 indexed
+        # https://docs.pytorch.org/docs/stable/generated/torch.nn.ParameterDict.html
+        # https://docs.pytorch.org/docs/stable/generated/torch.nn.parameter.Parameter.html
+        self.model_weights = nn.ParameterDict()
+        self.model_weights["W_vocab"] = nn.Parameter(weights["W_vocab"])
+        self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"])
+
+        num_layers = self.config["n_layers"]
+        num_heads = self.config["n_heads"]
+
+        self.model_weights["beta_final"] = nn.Parameter(weights["beta_final"])
+        self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"])
+
+        for l in range(1, num_layers + 1):
+            for h in range(1, num_heads + 1):
+                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"])
+                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"])
+                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"])
+
+            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"])
+
+            self.model_weights[f"W_{l}_up"] = nn.Parameter(weights[f"W_{l}_up"])
+            self.model_weights[f"W_{l}_down"] = nn.Parameter(weights[f"W_{l}_down"])
+            self.model_weights[f"b_{l}_up"] = nn.Parameter(weights[f"b_{l}_up"])
+            self.model_weights[f"b_{l}_down"] = nn.Parameter(weights[f"b_{l}_down"])
+
+            self.model_weights[f"beta_{l}_1"] = nn.Parameter(weights[f"beta_{l}_1"])
+            self.model_weights[f"beta_{l}_2"] = nn.Parameter(weights[f"beta_{l}_2"])
+            self.model_weights[f"gamma_{l}_1"] = nn.Parameter(weights[f"gamma_{l}_1"])
+            self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])      
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """

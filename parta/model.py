@@ -2,6 +2,21 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, List
 
+# x.unsqueeze(dim) -> adds a dimension of size 1 at the given dimension
+# x.unsqueeze(0) -> (1, L, d_model)
+# x.unsqueeze(1) -> (L, 1, d_model)
+# x.unsqueeze(2) -> (L, d_model, 1)
+
+# x.squeeze(dim) -> removes the dimension of size 1 at the given dimension
+# x.squeeze() -> removes all dimensions of size 1
+# e.g., (1, L, d_model).squeeze(0) -> (L, d_model)
+
+DEBUG = True
+
+class TransformerBlock(nn.Module):
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__()
+        self.config = config
 
 class LanguageModel(nn.Module):
     """
@@ -15,6 +30,14 @@ class LanguageModel(nn.Module):
         """
         self.config = config
         super().__init__()
+
+        if (self.config["d_model"] % self.config["n_heads"] != 0):
+            raise ValueError("d_model must be divisible by n_heads")
+
+        # nn.ModuleList is ensuring that all n_layers of your TransformerBlock are properly recognized by PyTorch
+        self.blocks = nn.ModuleList([
+            TransformerBlock(config) for _ in range(config["n_layers"])
+        ])
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -61,18 +84,28 @@ class LanguageModel(nn.Module):
         # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
         # PE(pos, 2i + 1) = cos(pos / 10000 ^ {2i/d_model})
         # input_ids -> (B, L)
-        # return -> (B, L, d_model)
+        # return -> (L, d_model)
+
+        # Optimized for GPU
         B, L = input_ids.shape
         d_model = self.config["d_model"]
-        pe = torch.zeros(B, L, d_model)
-        for pos in range(L):
-            for i in range(d_model // 2):
-                pe[:, pos, 2 * i] = torch.sin(torch.tensor(pos / (10000 ** (2 * i / d_model))))
-                pe[:, pos, 2 * i + 1] = torch.cos(torch.tensor(pos / (10000 ** (2 * i / d_model))))
+        device = input_ids.device
 
-        if (d_model % 2):
-            pe[:, :, d_model - 1] = torch.sin(torch.tensor(pos / (10000 ** (2 * (d_model // 2) / d_model))))
+        positions = torch.arange(L, device=device) #(L)
+        # positions range from 0 to L-1 (some are padded)
+        
+        i = torch.arange(d_model, device=device) // 2 #(d_model)
+        denominator = 10000 ** (2 * i / d_model) # (d_model)            
+        
+        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
+        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
+        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
 
+        if DEBUG:
+            print("[DIM][PE]positions", positions.shape)
+            print("[DIM][PE]denominator", denominator.shape)
+            print("[DIM][PE]pe", pe.shape)
+        
         return pe
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -92,10 +125,15 @@ class LanguageModel(nn.Module):
         X = self.model_weights["W_vocab"][input_ids] # (B, L, d_model)
 
         # Get Positional Encoding
-        X = X + self.positional_enc(input_ids)
+        X = X + self.positional_enc(input_ids).unsqueeze(0) # (B, L, d_model)
+
+        if DEBUG:
+            print("[DIM][FORWARD]X", X.shape)
         
         # Transformer Blocks
-
+        for block in self.blocks:
+            X = block(X, attention_mask)
+        
 
 
 def load_model(config: Dict[str, Any], weights: Dict[str, Any]):

@@ -93,4 +93,22 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     Ensure that the function takes in a batch of data and outputs a dictionary of tensors ready to be fed into the model.
     """
     PAD_ID = 0  # Assume 0 is the padding token ID
-    raise NotImplementedError("Implement collate_fn as described in assignment document")
+    # raise NotImplementedError("Implement collate_fn as described in assignment document")
+
+    input_ids_list = batch["input_ids"]
+    attention_mask_list = batch["attention_mask"]
+
+    # https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.rnn.pad_sequence.html
+
+    padded_input_ids = torch.nn.utils.rnn.pad_sequence(
+        input_ids_list, batch_first=True, padding_value=PAD_ID
+    )
+    padded_attention_mask = torch.nn.utils.rnn.pad_sequence(
+        attention_mask_list, batch_first=True, padding_value=PAD_ID
+    )
+
+    return {
+        "input_ids": padded_input_ids,
+        "attention_mask": padded_attention_mask
+    }
+    

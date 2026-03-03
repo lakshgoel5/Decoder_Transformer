@@ -30,7 +30,7 @@ class LanguageModel(nn.Module):
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.ParameterDict.html
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.parameter.Parameter.html
         self.model_weights = nn.ParameterDict()
-        self.model_weights["W_vocab"] = nn.Parameter(weights["W_vocab"])
+        self.model_weights["W_vocab"] = nn.Parameter(weights["W_vocab"].T)
         self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"])
 
         num_layers = self.config["n_layers"]
@@ -55,7 +55,25 @@ class LanguageModel(nn.Module):
             self.model_weights[f"beta_{l}_1"] = nn.Parameter(weights[f"beta_{l}_1"])
             self.model_weights[f"beta_{l}_2"] = nn.Parameter(weights[f"beta_{l}_2"])
             self.model_weights[f"gamma_{l}_1"] = nn.Parameter(weights[f"gamma_{l}_1"])
-            self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])      
+            self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])
+
+    def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
+        # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
+        # PE(pos, 2i + 1) = cos(pos / 10000 ^ {2i/d_model})
+        # input_ids -> (B, L)
+        # return -> (B, L, d_model)
+        B, L = input_ids.shape
+        d_model = self.config["d_model"]
+        pe = torch.zeros(B, L, d_model)
+        for pos in range(L):
+            for i in range(d_model // 2):
+                pe[:, pos, 2 * i] = torch.sin(torch.tensor(pos / (10000 ** (2 * i / d_model))))
+                pe[:, pos, 2 * i + 1] = torch.cos(torch.tensor(pos / (10000 ** (2 * i / d_model))))
+
+        if (d_model % 2):
+            pe[:, :, d_model - 1] = torch.sin(torch.tensor(pos / (10000 ** (2 * (d_model // 2) / d_model))))
+
+        return pe
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
@@ -69,7 +87,14 @@ class LanguageModel(nn.Module):
             - A tensor of shape (batch_size, sequence_len, vocab_size) containing the logits for each token in the vocabulary.
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
-        raise NotImplementedError("Implement forward as described in assignment document")
+        # raise NotImplementedError("Implement forward as described in assignment document")
+        # Input embedding
+        X = self.model_weights["W_vocab"][input_ids] # (B, L, d_model)
+
+        # Get Positional Encoding
+        X = X + self.positional_enc(input_ids)
+        
+        # Transformer Blocks
 
 
 

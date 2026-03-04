@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 # x.squeeze() -> removes all dimensions of size 1
 # e.g., (1, L, d_model).squeeze(0) -> (L, d_model)
 
-DEBUG = True
+DEBUG = False
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: Dict[str, Any], layer_idx: int):
@@ -20,7 +20,7 @@ class TransformerBlock(nn.Module):
         self.layer_idx = layer_idx
         self.weights = None
 
-    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, q_weight: torch.Tensor, k_weight: torch.Tensor, v_weight: torch.Tensor, mode: str, tau: float) -> torch.Tensor:
+    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, head_idx: int) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
         # return -> (B, L, d_model)
@@ -28,11 +28,59 @@ class TransformerBlock(nn.Module):
         # Q -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
         # K -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
         # V -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
-        # QK^T -> (B, L, d_head) @ (B, L, d_head) -> (B, L, L)
+        # QK^T -> (B, L, d_head) @ (B, d_head, L) -> (B, L, L) or say (B, L_query, L_key)
         # Softmax(QK^T / sqrt(d_head)) -> (B, L, L)
         # Softmax(QK^T / sqrt(d_head)) @ V -> (B, L, d_head)
-        # (B, L, d_head) @ (d_head, d_model) -> (B, L, d_model)
-        pass
+        # Attn @ V
+
+        q = x @ self.weights[f"W_{self.layer_idx}_Q_{head_idx}"] # Query
+        k = x @ self.weights[f"W_{self.layer_idx}_K_{head_idx}"] # Key
+        v = x @ self.weights[f"W_{self.layer_idx}_V_{head_idx}"] # Value
+
+        # Find alpha_i_j
+        S = (q @ k.transpose(1,2)) / torch.sqrt(torch.tensor(self.config["d_head"]))
+        # Weight Matrix of q_i * k_j where each row is for a word
+        # How much token i should look at token j (as query is of i)
+
+        if DEBUG:
+            print("[DIM][HEAD] q:", q.shape)
+            print("[DIM][HEAD] k:", k.shape)
+            print("[DIM][HEAD] v:", v.shape)
+            print("[DIM][HEAD] S:", S.shape)
+            print("[DIM][HEAD] attention_mask:", attention_mask.shape)
+
+
+        if self.config["mode"] == "tanh-clipped":
+            tau = self.config["tau"]
+            S = tau * torch.tanh(S)
+
+        # Apply Padding and causal masking
+        B, L, _ = x.shape
+        causal = torch.triu(torch.full((L, L), float("-inf"), device=x.device), diagonal=1)
+        pad = (attention_mask == 0).float() * float("-inf")
+        pad = torch.nan_to_num(pad).unsqueeze(1)  # (B, 1, L)
+        S = S + causal + pad
+
+        # Softmax
+        S = torch.softmax(S, dim=-1)
+        # By applying softmax over dim=-1 or dim=2, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
+
+        return S @ v
+        
+    def feed_forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x -> (B, L, d_model)
+        # return -> (B, L, d_model)
+
+        # up -> (B, L, d_ff)
+        # down -> (B, L, d_model)
+        
+        up = x @ self.weights[f"W_{self.layer_idx}_up"] + self.weights[f"b_{self.layer_idx}_up"]
+
+        gelu = torch.nn.functional.gelu(up)
+
+        down = gelu @ self.weights[f"W_{self.layer_idx}_down"] + self.weights[f"b_{self.layer_idx}_down"]
+
+        return down
         
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -44,15 +92,11 @@ class TransformerBlock(nn.Module):
         x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_1"], self.weights[f"gamma_{self.layer_idx}_1"])
 
         head_outputs = []
-        for head in range(1, self.config["n_heads"] + 1):
+        for head_idx in range(1, self.config["n_heads"] + 1):
             head_outputs.append(self.multihead(
                 x_norm, 
                 attention_mask, 
-                self.weights[f"W_{self.layer_idx}_Q_{head}"], 
-                self.weights[f"W_{self.layer_idx}_K_{head}"], 
-                self.weights[f"W_{self.layer_idx}_V_{head}"],
-                self.config["mode"],
-                self.config["tau"],
+                head_idx,
             ))
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
@@ -63,7 +107,7 @@ class TransformerBlock(nn.Module):
 
         # Pre-Norm
         x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_2"], self.weights[f"gamma_{self.layer_idx}_2"])
-        z2 = feed_forward(x_norm, self.weights[f"W_{self.layer_idx}_up"], self.weights[f"W_{self.layer_idx}_down"], self.weights[f"b_{self.layer_idx}_up"], self.weights[f"b_{self.layer_idx}_down"])
+        z2 = self.feed_forward(x_norm)
 
         # Residual connection
         x = x + z2
@@ -118,9 +162,9 @@ class LanguageModel(nn.Module):
 
         for l in range(1, num_layers + 1):
             for h in range(1, num_heads + 1):
-                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"])
-                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"])
-                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"])
+                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
+                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
+                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
 
             self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"])
 

@@ -38,7 +38,7 @@ class TransformerBlock(nn.Module):
         v = x @ self.weights[f"W_{self.layer_idx}_V_{head_idx}"] # Value
 
         # Find alpha_i_j
-        S = (q @ k.transpose(1,2)) / torch.sqrt(torch.tensor(self.config["d_head"]))
+        S = (q @ k.transpose(1,2)) / (self.config["d_head"] ** 0.5) # Now floatint point
         # Weight Matrix of q_i * k_j where each row is for a word
         # How much token i should look at token j (as query is of i)
 

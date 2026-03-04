@@ -20,6 +20,21 @@ class TransformerBlock(nn.Module):
         self.layer_idx = layer_idx
         self.weights = None
 
+    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, q_weight: torch.Tensor, k_weight: torch.Tensor, v_weight: torch.Tensor, mode: str, tau: float) -> torch.Tensor:
+        # x -> (B, L, d_model)
+        # attention_mask -> (B, L)
+        # return -> (B, L, d_model)
+
+        # Q -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
+        # K -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
+        # V -> (B, L, d_model) @ (d_model, d_head) -> (B, L, d_head)
+        # QK^T -> (B, L, d_head) @ (B, L, d_head) -> (B, L, L)
+        # Softmax(QK^T / sqrt(d_head)) -> (B, L, L)
+        # Softmax(QK^T / sqrt(d_head)) @ V -> (B, L, d_head)
+        # (B, L, d_head) @ (d_head, d_model) -> (B, L, d_model)
+        pass
+        
+
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
@@ -29,8 +44,16 @@ class TransformerBlock(nn.Module):
         x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_1"], self.weights[f"gamma_{self.layer_idx}_1"])
 
         head_outputs = []
-        for head in range(self.config["n_heads"]):
-            head_outputs.append(multihead(x_norm, attention_mask, self.weights[f"W_{self.layer_idx}_Q_{head}"], self.weights[f"W_{self.layer_idx}_K_{head}"], self.weights[f"W_{self.layer_idx}_V_{head}"]))
+        for head in range(1, self.config["n_heads"] + 1):
+            head_outputs.append(self.multihead(
+                x_norm, 
+                attention_mask, 
+                self.weights[f"W_{self.layer_idx}_Q_{head}"], 
+                self.weights[f"W_{self.layer_idx}_K_{head}"], 
+                self.weights[f"W_{self.layer_idx}_V_{head}"],
+                self.config["mode"],
+                self.config["tau"],
+            ))
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
         z1 = torch.cat(head_outputs, dim=-1) @ self.weights[f"W_{self.layer_idx}_O"]
@@ -60,6 +83,7 @@ class LanguageModel(nn.Module):
         """
         self.config = config
         super().__init__()
+        self.model_weights = None
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
             raise ValueError("d_model must be divisible by n_heads")
@@ -68,9 +92,6 @@ class LanguageModel(nn.Module):
         self.blocks = nn.ModuleList([
             TransformerBlock(config, l + 1) for l in range(config["n_layers"])
         ])
-
-        for block in self.blocks:
-            block.weights = self.model_weights # Reference
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -112,6 +133,9 @@ class LanguageModel(nn.Module):
             self.model_weights[f"beta_{l}_2"] = nn.Parameter(weights[f"beta_{l}_2"])
             self.model_weights[f"gamma_{l}_1"] = nn.Parameter(weights[f"gamma_{l}_1"])
             self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])
+
+        for block in self.blocks:
+            block.weights = self.model_weights # Reference
 
     def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
         # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})

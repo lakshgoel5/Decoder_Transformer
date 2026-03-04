@@ -108,6 +108,18 @@ class LanguageModel(nn.Module):
         
         return pe
 
+    # https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.layer_norm.html
+    def layer_norm(self, X: torch.Tensor, beta: torch.Tensor, gamma: torch.Tensor) -> torch.Tensor:
+        # X -> (B, L, d_model)
+        # beta -> (d_model)
+        # gamma -> (d_model)
+        # return -> (B, L, d_model)
+        
+        # Each word vector is normalized
+        # Functions picks last dimension that matches "normalized_shape"
+        # We have B x L independent normalization operations
+        return torch.nn.functional.layer_norm(X, normalized_shape = X.shape[-1], weight = gamma, bias = beta)
+
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Implement the forward pass of the model. The output should be a tensor of shape (T, |Vocab|).
@@ -133,7 +145,22 @@ class LanguageModel(nn.Module):
         # Transformer Blocks
         for block in self.blocks:
             X = block(X, attention_mask)
+
+        if DEBUG:
+            print("[DIM][FORWARD]X", X.shape)
+            print("[DIM][FORWARD]beta_final", self.model_weights["beta_final"].shape)
+            print("[DIM][FORWARD]gamma_final", self.model_weights["gamma_final"].shape)
         
+        X_final = self.layer_norm(X, self.model_weights["beta_final"], self.model_weights["gamma_final"])
+
+        if DEBUG:
+            print("[DIM][FORWARD]X_final", X_final.shape)
+
+        # self.model_weights["W_devocab"] -> (d_model, Vocab_size)
+        # X_final -> (B, L, d_model)
+        logits = X_final @ self.model_weights["W_devocab"] # (B, L, Vocab_size)
+
+        return logits
 
 
 def load_model(config: Dict[str, Any], weights: Dict[str, Any]):

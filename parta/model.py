@@ -14,9 +14,39 @@ from typing import Any, Dict, List
 DEBUG = True
 
 class TransformerBlock(nn.Module):
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], layer_idx: int):
         super().__init__()
         self.config = config
+        self.layer_idx = layer_idx
+        self.weights = None
+
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        # x -> (B, L, d_model)
+        # attention_mask -> (B, L)
+        # return -> (B, L, d_model)
+
+        # Pre-Norm
+        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_1"], self.weights[f"gamma_{self.layer_idx}_1"])
+
+        head_outputs = []
+        for head in range(self.config["n_heads"]):
+            head_outputs.append(multihead(x_norm, attention_mask, self.weights[f"W_{self.layer_idx}_Q_{head}"], self.weights[f"W_{self.layer_idx}_K_{head}"], self.weights[f"W_{self.layer_idx}_V_{head}"]))
+
+        # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
+        z1 = torch.cat(head_outputs, dim=-1) @ self.weights[f"W_{self.layer_idx}_O"]
+
+        # Residual connection
+        x = x + z1
+
+        # Pre-Norm
+        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_2"], self.weights[f"gamma_{self.layer_idx}_2"])
+        z2 = feed_forward(x_norm, self.weights[f"W_{self.layer_idx}_up"], self.weights[f"W_{self.layer_idx}_down"], self.weights[f"b_{self.layer_idx}_up"], self.weights[f"b_{self.layer_idx}_down"])
+
+        # Residual connection
+        x = x + z2
+
+        return x
+        
 
 class LanguageModel(nn.Module):
     """
@@ -36,8 +66,11 @@ class LanguageModel(nn.Module):
 
         # nn.ModuleList is ensuring that all n_layers of your TransformerBlock are properly recognized by PyTorch
         self.blocks = nn.ModuleList([
-            TransformerBlock(config) for _ in range(config["n_layers"])
+            TransformerBlock(config, l + 1) for l in range(config["n_layers"])
         ])
+
+        for block in self.blocks:
+            block.weights = self.model_weights # Reference
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -108,18 +141,6 @@ class LanguageModel(nn.Module):
         
         return pe
 
-    # https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.layer_norm.html
-    def layer_norm(self, X: torch.Tensor, beta: torch.Tensor, gamma: torch.Tensor) -> torch.Tensor:
-        # X -> (B, L, d_model)
-        # beta -> (d_model)
-        # gamma -> (d_model)
-        # return -> (B, L, d_model)
-        
-        # Each word vector is normalized
-        # Functions picks last dimension that matches "normalized_shape"
-        # We have B x L independent normalization operations
-        return torch.nn.functional.layer_norm(X, normalized_shape = X.shape[-1], weight = gamma, bias = beta)
-
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Implement the forward pass of the model. The output should be a tensor of shape (T, |Vocab|).
@@ -151,7 +172,7 @@ class LanguageModel(nn.Module):
             print("[DIM][FORWARD]beta_final", self.model_weights["beta_final"].shape)
             print("[DIM][FORWARD]gamma_final", self.model_weights["gamma_final"].shape)
         
-        X_final = self.layer_norm(X, self.model_weights["beta_final"], self.model_weights["gamma_final"])
+        X_final = layer_norm(X, self.model_weights["beta_final"], self.model_weights["gamma_final"])
 
         if DEBUG:
             print("[DIM][FORWARD]X_final", X_final.shape)
@@ -161,6 +182,18 @@ class LanguageModel(nn.Module):
         logits = X_final @ self.model_weights["W_devocab"] # (B, L, Vocab_size)
 
         return logits
+
+# https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.layer_norm.html
+def layer_norm(X: torch.Tensor, beta: torch.Tensor, gamma: torch.Tensor) -> torch.Tensor:
+    # X -> (B, L, d_model)
+    # beta -> (d_model)
+    # gamma -> (d_model)
+    # return -> (B, L, d_model)
+    
+    # Each word vector is normalized
+    # Functions picks last dimension that matches "normalized_shape"
+    # We have B x L independent normalization operations
+    return torch.nn.functional.layer_norm(X, normalized_shape = [X.shape[-1]], weight = gamma, bias = beta)
 
 
 def load_model(config: Dict[str, Any], weights: Dict[str, Any]):

@@ -18,7 +18,6 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.weights = None
 
     def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, head_idx: int) -> torch.Tensor:
         # x -> (B, L, d_model)
@@ -33,9 +32,9 @@ class TransformerBlock(nn.Module):
         # Softmax(QK^T / sqrt(d_head)) @ V -> (B, L, d_head)
         # Attn @ V
 
-        q = x @ self.weights[f"W_{self.layer_idx}_Q_{head_idx}"] # Query
-        k = x @ self.weights[f"W_{self.layer_idx}_K_{head_idx}"] # Key
-        v = x @ self.weights[f"W_{self.layer_idx}_V_{head_idx}"] # Value
+        q = self.W_Q[head_idx - 1](x) # Query
+        k = self.W_K[head_idx - 1](x) # Key
+        v = self.W_V[head_idx - 1](x) # Value
 
         # Find alpha_i_j
         S = (q @ k.transpose(1,2)) / (self.config["d_head"] ** 0.5) # Now floatint point
@@ -74,11 +73,11 @@ class TransformerBlock(nn.Module):
         # up -> (B, L, d_ff)
         # down -> (B, L, d_model)
         
-        up = x @ self.weights[f"W_{self.layer_idx}_up"] + self.weights[f"b_{self.layer_idx}_up"]
+        up = self.W_up(x)
 
         gelu = torch.nn.functional.gelu(up)
 
-        down = gelu @ self.weights[f"W_{self.layer_idx}_down"] + self.weights[f"b_{self.layer_idx}_down"]
+        down = self.W_down(gelu)
 
         return down
         
@@ -89,7 +88,7 @@ class TransformerBlock(nn.Module):
         # return -> (B, L, d_model)
 
         # Pre-Norm
-        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_1"], self.weights[f"gamma_{self.layer_idx}_1"])
+        x_norm = layer_norm(x, self.beta_1, self.gamma_1)
 
         head_outputs = []
         for head_idx in range(1, self.config["n_heads"] + 1):
@@ -100,13 +99,13 @@ class TransformerBlock(nn.Module):
             ))
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
-        z1 = torch.cat(head_outputs, dim=-1) @ self.weights[f"W_{self.layer_idx}_O"]
+        z1 = self.W_O(torch.cat(head_outputs, dim=-1))
 
         # Residual connection
         x = x + z1
 
         # Pre-Norm
-        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_2"], self.weights[f"gamma_{self.layer_idx}_2"])
+        x_norm = layer_norm(x, self.beta_2, self.gamma_2)
         z2 = self.feed_forward(x_norm)
 
         # Residual connection
@@ -160,26 +159,49 @@ class LanguageModel(nn.Module):
         self.model_weights["beta_final"] = nn.Parameter(weights["beta_final"])
         self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"])
 
-        for l in range(1, num_layers + 1):
+        for l, block in enumerate(self.blocks, start=1):
+
+            block.W_Q = nn.ModuleList()
+            block.W_K = nn.ModuleList()
+            block.W_V = nn.ModuleList()
+
             for h in range(1, num_heads + 1):
-                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
-                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
-                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
+                # self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
+                w = weights[f"W_{l}_Q_{h}"]
+                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+                linear.weight = nn.Parameter(w)
+                block.W_Q.append(linear)
 
-            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
+                # self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
+                w = weights[f"W_{l}_K_{h}"]
+                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+                linear.weight = nn.Parameter(w)
+                block.W_K.append(linear)
 
-            self.model_weights[f"W_{l}_up"] = nn.Parameter(weights[f"W_{l}_up"])
-            self.model_weights[f"W_{l}_down"] = nn.Parameter(weights[f"W_{l}_down"])
-            self.model_weights[f"b_{l}_up"] = nn.Parameter(weights[f"b_{l}_up"])
-            self.model_weights[f"b_{l}_down"] = nn.Parameter(weights[f"b_{l}_down"])
+                # self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
+                w = weights[f"W_{l}_V_{h}"]
+                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+                linear.weight = nn.Parameter(w)
+                block.W_V.append(linear)
 
-            self.model_weights[f"beta_{l}_1"] = nn.Parameter(weights[f"beta_{l}_1"])
-            self.model_weights[f"beta_{l}_2"] = nn.Parameter(weights[f"beta_{l}_2"])
-            self.model_weights[f"gamma_{l}_1"] = nn.Parameter(weights[f"gamma_{l}_1"])
-            self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])
+            # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
+            w_o = weights[f"W_{l}_O"]
+            block.W_O = nn.Linear(w_o.shape[1], w_o.shape[0], bias=False)
+            block.W_O.weight = nn.Parameter(w_o)
 
-        for block in self.blocks:
-            block.weights = self.model_weights # Reference
+            w_up = weights[f"W_{l}_up"]
+            w_down = weights[f"W_{l}_down"]
+            block.W_up = nn.Linear(w_up.shape[0], w_up.shape[1], bias=True)
+            block.W_down = nn.Linear(w_down.shape[0], w_down.shape[1], bias=True)
+            block.W_up.weight = nn.Parameter(w_up.T)
+            block.W_down.weight = nn.Parameter(w_down.T)
+            block.W_up.bias = nn.Parameter(weights[f"b_{l}_up"])
+            block.W_down.bias = nn.Parameter(weights[f"b_{l}_down"])
+
+            block.beta_1 = nn.Parameter(weights[f"beta_{l}_1"])
+            block.beta_2 = nn.Parameter(weights[f"beta_{l}_2"])
+            block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"])
+            block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"])
 
     def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
         # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})

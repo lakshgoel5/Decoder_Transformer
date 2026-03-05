@@ -19,7 +19,7 @@ class TransformerBlock(nn.Module):
         self.config = config
         self.layer_idx = layer_idx
 
-    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, head_idx: int) -> torch.Tensor:
+    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
         # return -> (B, L, d_model)
@@ -32,19 +32,33 @@ class TransformerBlock(nn.Module):
         # Softmax(QK^T / sqrt(d_head)) @ V -> (B, L, d_head)
         # Attn @ V
 
-        q = self.W_Q[head_idx - 1](x) # Query
-        k = self.W_K[head_idx - 1](x) # Key
-        v = self.W_V[head_idx - 1](x) # Value
+        B, L, _ = x.shape
+
+        # (B, L, d_model) @ (d_model, n_heads * d_head) -> (B, L, n_heads * d_head)
+        q_all = self.W_Q_all(x) # Query
+        k_all = self.W_K_all(x) # Key
+        v_all = self.W_V_all(x) # Value
+
+        # (B, L, n_heads * d_head) -> (B, L, n_heads, d_head)
+        q_all = q_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+        k_all = k_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+        v_all = v_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+
+        # (B, L, n_heads, d_head) -> (B, n_heads, L, d_head)
+        q_all = q_all.transpose(1,2)
+        k_all = k_all.transpose(1,2)
+        v_all = v_all.transpose(1,2)
 
         # Find alpha_i_j
-        S = (q @ k.transpose(1,2)) / (self.config["d_head"] ** 0.5) # Now floatint point
+        # (B, n_heads, L, d_head) @ (B, n_heads, d_head, L) -> (B, n_heads, L, L)
+        S = (q_all @ k_all.transpose(-2,-1)) / (self.config["d_head"] ** 0.5) # Now floatint point
         # Weight Matrix of q_i * k_j where each row is for a word
         # How much token i should look at token j (as query is of i)
 
         if DEBUG:
-            print("[DIM][HEAD] q:", q.shape)
-            print("[DIM][HEAD] k:", k.shape)
-            print("[DIM][HEAD] v:", v.shape)
+            print("[DIM][HEAD] q_all:", q_all.shape)
+            print("[DIM][HEAD] k_all:", k_all.shape)
+            print("[DIM][HEAD] v_all:", v_all.shape)
             print("[DIM][HEAD] S:", S.shape)
             print("[DIM][HEAD] attention_mask:", attention_mask.shape)
 
@@ -55,16 +69,33 @@ class TransformerBlock(nn.Module):
 
         # Apply Padding and causal masking
         B, L, _ = x.shape
+        # (L, L)
         causal = torch.triu(torch.full((L, L), float("-inf"), device=x.device), diagonal=1)
+        # (L, L) -> (1, 1, L, L) — broadcasts over B and n_heads
+        causal = causal.unsqueeze(0).unsqueeze(0)
+
+        # (B, L)
         pad = (attention_mask == 0).float() * float("-inf")
-        pad = torch.nan_to_num(pad).unsqueeze(1)  # (B, 1, L)
+        # (B, L) -> (B, 1, 1, L) — broadcasts over n_heads and L_query
+        pad = torch.nan_to_num(pad).unsqueeze(1).unsqueeze(2)
+
+        # (B, n_heads, L, L)
         S = S + causal + pad
 
         # Softmax
         S = torch.softmax(S, dim=-1)
-        # By applying softmax over dim=-1 or dim=2, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
+        # By applying softmax over dim=-1 or dim=3, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
 
-        return S @ v
+        out = S @ v_all
+        # (B, n_heads, L, L) @ (B, n_heads, L, d_head) -> (B, n_heads, L, d_head)
+
+        # (B, n_heads, L, d_head) -> (B, L, n_heads, d_head)
+        out = out.transpose(1,2)
+
+        # (B, L, n_heads, d_head) -> (B, L, d_model)
+        out = out.reshape(B, L, self.config["d_model"])
+
+        return out
         
     def feed_forward(self, x: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
@@ -90,16 +121,12 @@ class TransformerBlock(nn.Module):
         # Pre-Norm
         x_norm = layer_norm(x, self.beta_1, self.gamma_1)
 
-        head_outputs = []
-        for head_idx in range(1, self.config["n_heads"] + 1):
-            head_outputs.append(self.multihead(
-                x_norm, 
-                attention_mask, 
-                head_idx,
-            ))
+        # (B, L, d_model) -> (B, L, n_heads * d_head)
+        # d_model is n_heads * d_head!!! Creacked it!
+        head_output = self.multihead(x_norm, attention_mask)
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
-        z1 = self.W_O(torch.cat(head_outputs, dim=-1))
+        z1 = self.W_O(head_output)
 
         # Residual connection
         x = x + z1
@@ -161,28 +188,39 @@ class LanguageModel(nn.Module):
 
         for l, block in enumerate(self.blocks, start=1):
 
-            block.W_Q = nn.ModuleList()
-            block.W_K = nn.ModuleList()
-            block.W_V = nn.ModuleList()
+            # for h in range(1, num_heads + 1):
+            #     # self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
+            #     w = weights[f"W_{l}_Q_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_Q.append(linear)
 
-            for h in range(1, num_heads + 1):
-                # self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
-                w = weights[f"W_{l}_Q_{h}"]
-                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
-                linear.weight = nn.Parameter(w)
-                block.W_Q.append(linear)
+            #     # self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
+            #     w = weights[f"W_{l}_K_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_K.append(linear)
 
-                # self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
-                w = weights[f"W_{l}_K_{h}"]
-                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
-                linear.weight = nn.Parameter(w)
-                block.W_K.append(linear)
+            #     # self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
+            #     w = weights[f"W_{l}_V_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_V.append(linear)
 
-                # self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
-                w = weights[f"W_{l}_V_{h}"]
-                linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
-                linear.weight = nn.Parameter(w)
-                block.W_V.append(linear)
+            # Each W_Q is (d_head, d_model)
+            W_Q_stacked = torch.cat([weights[f"W_{l}_Q_{h}"] for h in range(1, num_heads + 1)], dim=0) # Stacked vertically
+            W_K_stacked = torch.cat([weights[f"W_{l}_K_{h}"] for h in range(1, num_heads + 1)], dim=0)
+            W_V_stacked = torch.cat([weights[f"W_{l}_V_{h}"] for h in range(1, num_heads + 1)], dim=0)
+
+            # W_Q_stacked.shape[1] is d_model
+            # W_Q_stacked.shape[0] is num_heads * d_head which is d_model
+            block.W_Q_all = nn.Linear(W_Q_stacked.shape[1], W_Q_stacked.shape[0], bias=False)
+            block.W_K_all = nn.Linear(W_K_stacked.shape[1], W_K_stacked.shape[0], bias=False)
+            block.W_V_all = nn.Linear(W_V_stacked.shape[1], W_V_stacked.shape[0], bias=False)
+
+            block.W_Q_all.weight = nn.Parameter(W_Q_stacked)
+            block.W_K_all.weight = nn.Parameter(W_K_stacked)
+            block.W_V_all.weight = nn.Parameter(W_V_stacked)
 
             # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
             w_o = weights[f"W_{l}_O"]

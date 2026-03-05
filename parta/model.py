@@ -166,7 +166,7 @@ class LanguageModel(nn.Module):
                 self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
                 self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
 
-            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"])
+            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
 
             self.model_weights[f"W_{l}_up"] = nn.Parameter(weights[f"W_{l}_up"])
             self.model_weights[f"W_{l}_down"] = nn.Parameter(weights[f"W_{l}_down"])

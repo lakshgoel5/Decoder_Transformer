@@ -161,12 +161,21 @@ class LanguageModel(nn.Module):
         self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"])
 
         for l in range(1, num_layers + 1):
-            for h in range(1, num_heads + 1):
-                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
-                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
-                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
 
-            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
+            W_q_all = torch.cat([weights[f"W_{l}_Q_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+            W_k_all = torch.cat([weights[f"W_{l}_K_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+            W_v_all = torch.cat([weights[f"W_{l}_V_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+
+            W_q = W_q_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+            W_k = W_k_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+            W_v = W_v_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+
+            for h in range(1, num_heads + 1):
+                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(W_q[h-1].T)
+                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(W_k[h-1].T)
+                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(W_v[h-1].T)
+
+            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"])
 
             self.model_weights[f"W_{l}_up"] = nn.Parameter(weights[f"W_{l}_up"])
             self.model_weights[f"W_{l}_down"] = nn.Parameter(weights[f"W_{l}_down"])

@@ -315,7 +315,7 @@ class LanguageModel(nn.Module):
 
         B, L, _ = X.shape
         # Get Positional Encoding
-        X = X + self.pe[:L, :].unsqueeze(0) # (B, L, d_model)
+        X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
 
         if DEBUG:
             print("[DIM][FORWARD]X", X.shape)

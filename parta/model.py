@@ -218,14 +218,14 @@ class LanguageModel(nn.Module):
             block.W_K_all = nn.Linear(W_K_stacked.shape[1], W_K_stacked.shape[0], bias=False)
             block.W_V_all = nn.Linear(W_V_stacked.shape[1], W_V_stacked.shape[0], bias=False)
 
-            block.W_Q_all.weight = nn.Parameter(W_Q_stacked)
-            block.W_K_all.weight = nn.Parameter(W_K_stacked)
-            block.W_V_all.weight = nn.Parameter(W_V_stacked)
+            block.W_Q_all.weight = nn.Parameter(W_Q_stacked.T)  # linear(x) = x @ weight.T = x @ W_Q_stacked
+            block.W_K_all.weight = nn.Parameter(W_K_stacked.T)
+            block.W_V_all.weight = nn.Parameter(W_V_stacked.T)
 
             # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
             w_o = weights[f"W_{l}_O"]
             block.W_O = nn.Linear(w_o.shape[1], w_o.shape[0], bias=False)
-            block.W_O.weight = nn.Parameter(w_o)
+            block.W_O.weight = nn.Parameter(w_o.T)  # linear(x) = x @ weight.T = x @ w_o
 
             w_up = weights[f"W_{l}_up"]
             w_down = weights[f"W_{l}_down"]

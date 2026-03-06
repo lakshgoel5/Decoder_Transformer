@@ -69,18 +69,26 @@ class TransformerBlock(nn.Module):
 
         # Apply Padding and causal masking
         B, L, _ = x.shape
-        # (L, L)
-        causal = torch.triu(torch.full((L, L), float("-inf"), device=x.device), diagonal=1)
-        # (L, L) -> (1, 1, L, L) — broadcasts over B and n_heads
-        causal = causal.unsqueeze(0).unsqueeze(0)
 
-        # (B, L)
-        pad = (attention_mask == 0).float() * float("-inf")
-        # (B, L) -> (B, 1, 1, L) — broadcasts over n_heads and L_query
-        pad = torch.nan_to_num(pad).unsqueeze(1).unsqueeze(2)
+        # In language modeling, token i is not allowed to look ahead at token i+1
+        # diagonal = 1 -> Stands for "Triangle Upper". It takes that grid and zeroes out everything on the main diagonal and below it.
+        # [[  0.0, -inf, -inf, -inf],
+        # [0.0,  0.0, -inf, -inf],
+        # [0.0,  0.0,  0.0, -inf],
+        # [0.0,  0.0,  0.0,  0.0]]
+        # to
+        # [[False,  True,  True,  True],
+        # [False, False,  True,  True],
+        # [False, False, False,  True],
+        # [False, False, False, False]]
+        causal_mask = torch.triu(torch.ones((L, L), device=x.device, dtype=torch.bool), diagonal=1).unsqueeze(0).unsqueeze(0)
+
+        # (B, L) -> (B, 1, 1, L) to broadcast across n_heads and L_query
+        pad_mask = (attention_mask == 0).unsqueeze(1).unsqueeze(2)
 
         # (B, n_heads, L, L)
-        S = S + causal + pad
+        S = S.masked_fill(causal_mask, float("-inf"))
+        S = S.masked_fill(pad_mask, float("-inf"))
 
         # Softmax
         S = torch.softmax(S, dim=-1)
@@ -154,6 +162,7 @@ class LanguageModel(nn.Module):
         self.config = config
         super().__init__()
         self.model_weights = None
+        self.max_len = 2048
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
             raise ValueError("d_model must be divisible by n_heads")
@@ -162,6 +171,22 @@ class LanguageModel(nn.Module):
         self.blocks = nn.ModuleList([
             TransformerBlock(config, l + 1) for l in range(config["n_layers"])
         ])
+
+        # nn.Embedding is just a highly optimized lookup table (or dictionary) that maps integer token IDs to continuous, dense vectors (floating-point numbers).
+        # It is an $O(1)$ memory pointer operation, making it incredibly fast.
+        # (rows, columns) in table
+        self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
+
+        d_model = self.config["d_model"]
+        positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
+        i = torch.arange(d_model, dtype=torch.float32) // 2 #(d_model)
+        denominator = 10000 ** (2 * i / d_model) # (d_model)            
+        
+        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
+        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
+        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
+
+        self.register_buffer('pe', pe)
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -177,7 +202,10 @@ class LanguageModel(nn.Module):
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.ParameterDict.html
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.parameter.Parameter.html
         self.model_weights = nn.ParameterDict()
-        self.model_weights["W_vocab"] = nn.Parameter(weights["W_vocab"].T)
+
+        # .copy_(): In PyTorch, any function that ends with an underscore (_) means it is an in-place operation. It directly replaces the existing values in memory with the new ones, rather than creating a brand-new tensor.
+        self.token_embedding.weight.data.copy_(weights["W_vocab"].T)
+
         self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"])
 
         num_layers = self.config["n_layers"]
@@ -283,10 +311,11 @@ class LanguageModel(nn.Module):
         """
         # raise NotImplementedError("Implement forward as described in assignment document")
         # Input embedding
-        X = self.model_weights["W_vocab"][input_ids] # (B, L, d_model)
+        X = self.token_embedding(input_ids) # (B, L, d_model)
 
+        B, L, _ = X.shape
         # Get Positional Encoding
-        X = X + self.positional_enc(input_ids).unsqueeze(0) # (B, L, d_model)
+        X = X + self.pe[:L, :].unsqueeze(0) # (B, L, d_model)
 
         if DEBUG:
             print("[DIM][FORWARD]X", X.shape)

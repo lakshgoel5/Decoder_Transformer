@@ -165,28 +165,36 @@ class LanguageModel(nn.Module):
             block.W_K = nn.ModuleList()
             block.W_V = nn.ModuleList()
 
+            W_q_all = torch.cat([weights[f"W_{l}_Q_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+            W_k_all = torch.cat([weights[f"W_{l}_K_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+            W_v_all = torch.cat([weights[f"W_{l}_V_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+
+            W_q = W_q_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+            W_k = W_k_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+            W_v = W_v_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+
             for h in range(1, num_heads + 1):
                 # self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
-                w = weights[f"W_{l}_Q_{h}"]
+                w = W_q[h-1]
                 linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
                 linear.weight = nn.Parameter(w)
                 block.W_Q.append(linear)
 
                 # self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
-                w = weights[f"W_{l}_K_{h}"]
+                w = W_k[h-1]
                 linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
                 linear.weight = nn.Parameter(w)
                 block.W_K.append(linear)
 
                 # self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
-                w = weights[f"W_{l}_V_{h}"]
+                w = W_v[h-1]
                 linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
                 linear.weight = nn.Parameter(w)
                 block.W_V.append(linear)
 
             # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
-            w_o = weights[f"W_{l}_O"]
-            block.W_O = nn.Linear(w_o.shape[1], w_o.shape[0], bias=False)
+            w_o = weights[f"W_{l}_O"].T
+            block.W_O = nn.Linear(w_o.shape[0], w_o.shape[1], bias=False)
             block.W_O.weight = nn.Parameter(w_o)
 
             w_up = weights[f"W_{l}_up"]

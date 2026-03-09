@@ -18,9 +18,8 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        self.weights = None
 
-    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, head_idx: int) -> torch.Tensor:
+    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
         # return -> (B, L, d_model)
@@ -33,19 +32,33 @@ class TransformerBlock(nn.Module):
         # Softmax(QK^T / sqrt(d_head)) @ V -> (B, L, d_head)
         # Attn @ V
 
-        q = x @ self.weights[f"W_{self.layer_idx}_Q_{head_idx}"] # Query
-        k = x @ self.weights[f"W_{self.layer_idx}_K_{head_idx}"] # Key
-        v = x @ self.weights[f"W_{self.layer_idx}_V_{head_idx}"] # Value
+        B, L, _ = x.shape
+
+        # (B, L, d_model) @ (d_model, n_heads * d_head) -> (B, L, n_heads * d_head)
+        q_all = self.W_Q_all(x) # Query
+        k_all = self.W_K_all(x) # Key
+        v_all = self.W_V_all(x) # Value
+
+        # (B, L, n_heads * d_head) -> (B, L, n_heads, d_head)
+        q_all = q_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+        k_all = k_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+        v_all = v_all.view(B, L, self.config["n_heads"], self.config["d_head"])
+
+        # (B, L, n_heads, d_head) -> (B, n_heads, L, d_head)
+        q_all = q_all.transpose(1,2)
+        k_all = k_all.transpose(1,2)
+        v_all = v_all.transpose(1,2)
 
         # Find alpha_i_j
-        S = (q @ k.transpose(1,2)) / (self.config["d_head"] ** 0.5) # Now floatint point
+        # (B, n_heads, L, d_head) @ (B, n_heads, d_head, L) -> (B, n_heads, L, L)
+        S = (q_all @ k_all.transpose(-2,-1)) / (self.config["d_head"] ** 0.5) # Now floatint point
         # Weight Matrix of q_i * k_j where each row is for a word
         # How much token i should look at token j (as query is of i)
 
         if DEBUG:
-            print("[DIM][HEAD] q:", q.shape)
-            print("[DIM][HEAD] k:", k.shape)
-            print("[DIM][HEAD] v:", v.shape)
+            print("[DIM][HEAD] q_all:", q_all.shape)
+            print("[DIM][HEAD] k_all:", k_all.shape)
+            print("[DIM][HEAD] v_all:", v_all.shape)
             print("[DIM][HEAD] S:", S.shape)
             print("[DIM][HEAD] attention_mask:", attention_mask.shape)
 
@@ -56,16 +69,41 @@ class TransformerBlock(nn.Module):
 
         # Apply Padding and causal masking
         B, L, _ = x.shape
-        causal = torch.triu(torch.full((L, L), float("-inf"), device=x.device), diagonal=1)
-        pad = (attention_mask == 0).float() * float("-inf")
-        pad = torch.nan_to_num(pad).unsqueeze(1)  # (B, 1, L)
-        S = S + causal + pad
+
+        # In language modeling, token i is not allowed to look ahead at token i+1
+        # diagonal = 1 -> Stands for "Triangle Upper". It takes that grid and zeroes out everything on the main diagonal and below it.
+        # [[  0.0, -inf, -inf, -inf],
+        # [0.0,  0.0, -inf, -inf],
+        # [0.0,  0.0,  0.0, -inf],
+        # [0.0,  0.0,  0.0,  0.0]]
+        # to
+        # [[False,  True,  True,  True],
+        # [False, False,  True,  True],
+        # [False, False, False,  True],
+        # [False, False, False, False]]
+        causal_mask = torch.triu(torch.ones((L, L), device=x.device, dtype=torch.bool), diagonal=1).unsqueeze(0).unsqueeze(0)
+
+        # (B, L) -> (B, 1, 1, L) to broadcast across n_heads and L_query
+        pad_mask = (attention_mask == 0).unsqueeze(1).unsqueeze(2)
+
+        # (B, n_heads, L, L)
+        S = S.masked_fill(causal_mask, float("-inf"))
+        S = S.masked_fill(pad_mask, float("-inf"))
 
         # Softmax
         S = torch.softmax(S, dim=-1)
-        # By applying softmax over dim=-1 or dim=2, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
+        # By applying softmax over dim=-1 or dim=3, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
 
-        return S @ v
+        out = S @ v_all
+        # (B, n_heads, L, L) @ (B, n_heads, L, d_head) -> (B, n_heads, L, d_head)
+
+        # (B, n_heads, L, d_head) -> (B, L, n_heads, d_head)
+        out = out.transpose(1,2)
+
+        # (B, L, n_heads, d_head) -> (B, L, d_model)
+        out = out.reshape(B, L, self.config["d_model"])
+
+        return out
         
     def feed_forward(self, x: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
@@ -74,11 +112,11 @@ class TransformerBlock(nn.Module):
         # up -> (B, L, d_ff)
         # down -> (B, L, d_model)
         
-        up = x @ self.weights[f"W_{self.layer_idx}_up"] + self.weights[f"b_{self.layer_idx}_up"]
+        up = self.W_up(x)
 
         gelu = torch.nn.functional.gelu(up)
 
-        down = gelu @ self.weights[f"W_{self.layer_idx}_down"] + self.weights[f"b_{self.layer_idx}_down"]
+        down = self.W_down(gelu)
 
         return down
         
@@ -89,24 +127,20 @@ class TransformerBlock(nn.Module):
         # return -> (B, L, d_model)
 
         # Pre-Norm
-        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_1"], self.weights[f"gamma_{self.layer_idx}_1"])
+        x_norm = layer_norm(x, self.beta_1, self.gamma_1)
 
-        head_outputs = []
-        for head_idx in range(1, self.config["n_heads"] + 1):
-            head_outputs.append(self.multihead(
-                x_norm, 
-                attention_mask, 
-                head_idx,
-            ))
+        # (B, L, d_model) -> (B, L, n_heads * d_head)
+        # d_model is n_heads * d_head!!! Creacked it!
+        head_output = self.multihead(x_norm, attention_mask)
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
-        z1 = torch.cat(head_outputs, dim=-1) @ self.weights[f"W_{self.layer_idx}_O"]
+        z1 = self.W_O(head_output)
 
         # Residual connection
         x = x + z1
 
         # Pre-Norm
-        x_norm = layer_norm(x, self.weights[f"beta_{self.layer_idx}_2"], self.weights[f"gamma_{self.layer_idx}_2"])
+        x_norm = layer_norm(x, self.beta_2, self.gamma_2)
         z2 = self.feed_forward(x_norm)
 
         # Residual connection
@@ -128,6 +162,7 @@ class LanguageModel(nn.Module):
         self.config = config
         super().__init__()
         self.model_weights = None
+        self.max_len = 2048
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
             raise ValueError("d_model must be divisible by n_heads")
@@ -136,6 +171,22 @@ class LanguageModel(nn.Module):
         self.blocks = nn.ModuleList([
             TransformerBlock(config, l + 1) for l in range(config["n_layers"])
         ])
+
+        # nn.Embedding is just a highly optimized lookup table (or dictionary) that maps integer token IDs to continuous, dense vectors (floating-point numbers).
+        # It is an $O(1)$ memory pointer operation, making it incredibly fast.
+        # (rows, columns) in table
+        self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
+
+        d_model = self.config["d_model"]
+        positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
+        i = torch.arange(d_model, dtype=torch.float32) // 2 #(d_model)
+        denominator = 10000 ** (2 * i / d_model) # (d_model)            
+        
+        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
+        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
+        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
+
+        self.register_buffer('pe', pe)
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -151,7 +202,10 @@ class LanguageModel(nn.Module):
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.ParameterDict.html
         # https://docs.pytorch.org/docs/stable/generated/torch.nn.parameter.Parameter.html
         self.model_weights = nn.ParameterDict()
-        self.model_weights["W_vocab"] = nn.Parameter(weights["W_vocab"].T)
+
+        # .copy_(): In PyTorch, any function that ends with an underscore (_) means it is an in-place operation. It directly replaces the existing values in memory with the new ones, rather than creating a brand-new tensor.
+        self.token_embedding.weight.data.copy_(weights["W_vocab"].T)
+
         self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"])
 
         num_layers = self.config["n_layers"]
@@ -160,35 +214,60 @@ class LanguageModel(nn.Module):
         self.model_weights["beta_final"] = nn.Parameter(weights["beta_final"])
         self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"])
 
-        for l in range(1, num_layers + 1):
+        for l, block in enumerate(self.blocks, start=1):
 
-            W_q_all = torch.cat([weights[f"W_{l}_Q_{h}"] for h in range(1, num_heads + 1)], dim = 0)
-            W_k_all = torch.cat([weights[f"W_{l}_K_{h}"] for h in range(1, num_heads + 1)], dim = 0)
-            W_v_all = torch.cat([weights[f"W_{l}_V_{h}"] for h in range(1, num_heads + 1)], dim = 0)
+            # for h in range(1, num_heads + 1):
+            #     # self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(weights[f"W_{l}_Q_{h}"].T)
+            #     w = weights[f"W_{l}_Q_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_Q.append(linear)
 
-            W_q = W_q_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
-            W_k = W_k_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
-            W_v = W_v_all.T.chunk(num_heads, dim = 0) # (d_head, d_model)
+            #     # self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(weights[f"W_{l}_K_{h}"].T)
+            #     w = weights[f"W_{l}_K_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_K.append(linear)
 
-            for h in range(1, num_heads + 1):
-                self.model_weights[f"W_{l}_Q_{h}"] = nn.Parameter(W_q[h-1].T)
-                self.model_weights[f"W_{l}_K_{h}"] = nn.Parameter(W_k[h-1].T)
-                self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(W_v[h-1].T)
+            #     # self.model_weights[f"W_{l}_V_{h}"] = nn.Parameter(weights[f"W_{l}_V_{h}"].T)
+            #     w = weights[f"W_{l}_V_{h}"]
+            #     linear = nn.Linear(w.shape[1], w.shape[0], bias=False)
+            #     linear.weight = nn.Parameter(w)
+            #     block.W_V.append(linear)
 
-            self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"])
+            # Each W_Q is (d_head, d_model)
+            W_Q_stacked = torch.cat([weights[f"W_{l}_Q_{h}"] for h in range(1, num_heads + 1)], dim=0) # Stacked vertically
+            W_K_stacked = torch.cat([weights[f"W_{l}_K_{h}"] for h in range(1, num_heads + 1)], dim=0)
+            W_V_stacked = torch.cat([weights[f"W_{l}_V_{h}"] for h in range(1, num_heads + 1)], dim=0)
 
-            self.model_weights[f"W_{l}_up"] = nn.Parameter(weights[f"W_{l}_up"])
-            self.model_weights[f"W_{l}_down"] = nn.Parameter(weights[f"W_{l}_down"])
-            self.model_weights[f"b_{l}_up"] = nn.Parameter(weights[f"b_{l}_up"])
-            self.model_weights[f"b_{l}_down"] = nn.Parameter(weights[f"b_{l}_down"])
+            # W_Q_stacked.shape[1] is d_model
+            # W_Q_stacked.shape[0] is num_heads * d_head which is d_model
+            block.W_Q_all = nn.Linear(W_Q_stacked.shape[1], W_Q_stacked.shape[0], bias=False)
+            block.W_K_all = nn.Linear(W_K_stacked.shape[1], W_K_stacked.shape[0], bias=False)
+            block.W_V_all = nn.Linear(W_V_stacked.shape[1], W_V_stacked.shape[0], bias=False)
 
-            self.model_weights[f"beta_{l}_1"] = nn.Parameter(weights[f"beta_{l}_1"])
-            self.model_weights[f"beta_{l}_2"] = nn.Parameter(weights[f"beta_{l}_2"])
-            self.model_weights[f"gamma_{l}_1"] = nn.Parameter(weights[f"gamma_{l}_1"])
-            self.model_weights[f"gamma_{l}_2"] = nn.Parameter(weights[f"gamma_{l}_2"])
+            block.W_Q_all.weight = nn.Parameter(W_Q_stacked.T)  # linear(x) = x @ weight.T = x @ W_Q_stacked
+            block.W_K_all.weight = nn.Parameter(W_K_stacked.T)
+            block.W_V_all.weight = nn.Parameter(W_V_stacked.T)
 
-        for block in self.blocks:
-            block.weights = self.model_weights # Reference
+            # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
+            w_o = weights[f"W_{l}_O"]
+            block.W_O = nn.Linear(w_o.shape[1], w_o.shape[0], bias=False)
+            block.W_O.weight = nn.Parameter(w_o.T)  # linear(x) = x @ weight.T = x @ w_o
+
+            w_up = weights[f"W_{l}_up"]
+            w_down = weights[f"W_{l}_down"]
+            block.W_up = nn.Linear(w_up.shape[0], w_up.shape[1], bias=True)
+            block.W_down = nn.Linear(w_down.shape[0], w_down.shape[1], bias=True)
+            block.W_up.weight = nn.Parameter(w_up.T)
+            block.W_down.weight = nn.Parameter(w_down.T)
+            block.W_up.bias = nn.Parameter(weights[f"b_{l}_up"])
+            block.W_down.bias = nn.Parameter(weights[f"b_{l}_down"])
+
+            block.beta_1 = nn.Parameter(weights[f"beta_{l}_1"])
+            block.beta_2 = nn.Parameter(weights[f"beta_{l}_2"])
+            block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"])
+            block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"])
 
     def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
         # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
@@ -232,10 +311,11 @@ class LanguageModel(nn.Module):
         """
         # raise NotImplementedError("Implement forward as described in assignment document")
         # Input embedding
-        X = self.model_weights["W_vocab"][input_ids] # (B, L, d_model)
+        X = self.token_embedding(input_ids) # (B, L, d_model)
 
+        B, L, _ = X.shape
         # Get Positional Encoding
-        X = X + self.positional_enc(input_ids).unsqueeze(0) # (B, L, d_model)
+        X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
 
         if DEBUG:
             print("[DIM][FORWARD]X", X.shape)

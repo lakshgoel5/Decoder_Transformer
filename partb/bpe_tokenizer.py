@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 class BPETokenizer:
     def __init__(self, vocab_size, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
@@ -17,19 +19,52 @@ class BPETokenizer:
 
         self.UNK_token = "<|UNK|>"
 
+        SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>"]
+
+        for token in self.special_tokens:
+            if token not in SPECIALS:
+                SPECIALS.append(token)
+        # Special has all special tokens
+
     def train(self, corpus):
-        raise NotImplementedError("Training method not implemented yet.")
+        # raise NotImplementedError("Training method not implemented yet.")
+
         # ----- Pair frequency counting ------
+        word_freq = defaultdict(int)
+        for word in corpus:
+            for token in word.split():
+                word_freq[token] += 1
+        # example
+        # the -> 5
+        # a -> 7
+
+        for word, freq in word_freq.items():
+            chars = []
+            for i, c in enumerate(word):
+                token = (SPACE + c) if i==0 else c
+                chars.append(token) # List of chars
+            # tuple(chars) -> tuple of list elements
+            self.frequency[tuple(chars)] = freq
+
+        # example
+        # (_t,h,e) -> 5
+        # (_a) -> 7
+
+        # working copy
+        word_freqs = dict(self.frequency)
 
         # -------- repeat for n iterations
         # ----- select best pair(break ties) -------
-    
+
         # ----- apply the merge ------
 
         # ----- record the operation ------
 
 
         # ------ add special tokens (later as they must not be split) ------- assign reserved token IDs
+        for token in SPECIALS:
+            self.add_token(token)
+
     def encode(self, text):
         # raise NotImplementedError("Encoding method not implemented yet.")
         # -------- text processing --------

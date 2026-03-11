@@ -2,7 +2,8 @@ import os
 import json
 from collections import defaultdict
 
-SPACE = "\u0120"
+SPACE = "\u0120" # From terminal -> Ġ
+DEBUG = False
 
 class BPETokenizer:
     def __init__(self, vocab_size, special_tokens=None):
@@ -36,11 +37,25 @@ class BPETokenizer:
         for token in SPECIALS:
             self.add_token(token, special = True) # Build vocab
 
-    def add_token(self, token, special = False):
-        pass
+    def add_token(self, token, special=False):
+        if token not in self.char_to_int:
+            idx = len(self.char_to_int)
+            self.char_to_int[token] = idx
+            self.int_to_char[idx] = token
+            self.vocab.append(token)
 
     def get_best_pair(self, word_freqs):
-        pass
+        pairs = defaultdict(int)
+
+        for word_tuple, freq in word_freqs.items():
+            for i in range(len(word_tuple) - 1):
+                pairs[(word_tuple[i], word_tuple[i + 1])] += freq
+
+        if not pairs:
+            return None
+
+        # Break ties alphabetically
+        return max(pairs, key=lambda p: (pairs[p], p))
 
     def apply_merge(self, pair, word_freqs):
         pass
@@ -90,6 +105,7 @@ class BPETokenizer:
 
             # ----- record the operation ------
             self.merges.append(pair)
+            self.add_token("".join(pair))
 
         if len(self.vocab) > self.vocab_size:
             raise ValueError("Vocabulary size exceeded.")
@@ -97,9 +113,10 @@ class BPETokenizer:
         #DECODE
         assert(len(self.vocab) == len(self.char_to_int) == len(self.int_to_char))
 
-        print(f"[TRAIN] Vocab size: {len(self.vocab)}")
-        print(f"[TRAIN] vocab_size: {self.vocab_size}")
-        print(f"[TRAIN] Number of merges: {len(self.merges)}")
+        if DEBUG:
+            print(f"[TRAIN] Vocab size: {len(self.vocab)}")
+            print(f"[TRAIN] vocab_size: {self.vocab_size}")
+            print(f"[TRAIN] Number of merges: {len(self.merges)}")
 
     def encode(self, text):
         # raise NotImplementedError("Encoding method not implemented yet.")
@@ -124,16 +141,19 @@ class BPETokenizer:
 
             segmented.append(chars) # segmented is list of lists
 
-        print(f"[ENCODE] Length of unique chars in text: {len(unique)}")
-        print(f"[ENCODE] Segmented text: {segmented}")
+        if DEBUG:
+            print(f"[ENCODE] Length of unique chars in text: {len(unique)}")
+            print(f"[ENCODE] Unque chars: {unique}")
+            print(f"[ENCODE] Segmented text: {segmented}")
 
         # --------- Apply bpe merges ---------
         # Iteratively apply merge operations in exact same order
         for pair in self.merges:
             segmented = self.apply_merge_order(pair, segmented)
 
-        print(f"[ENCODE] Length of segmented: {len(segmented)}")
-        print(f"[ENCODE] Segmented text: {segmented}")
+        if DEBUG:
+            print(f"[ENCODE] Length of segmented: {len(segmented)}")
+            print(f"[ENCODE] Segmented text: {segmented}")
 
         # -------- Token ID conversion ---------
         # Convert tokens to corresponding intiger IDs
@@ -146,7 +166,6 @@ class BPETokenizer:
                 else:
                     token_ids.append(self.char_to_int[self.UNK_token])
         
-        print(f"[ENCODE] Token IDs: {token_ids}")
         return token_ids
 
     def decode(self, token_ids):
@@ -163,7 +182,6 @@ class BPETokenizer:
         text = "".join(tokens)
         text = text.replace(SPACE, " ")
 
-        print(f"[DECODE] Decoded text: {text}")
         return text
 
     def save(self, filepath):
@@ -209,7 +227,7 @@ class BPETokenizer:
     def get_unk_id(self):
         # raise NotImplementedError("Get unk id method not implemented yet.")
         # return unk id
-        return self.char_to_int(self.UNK_token)
+        return self.char_to_int[self.UNK_token]
 
 # Metrics:
 # decode(encode(text)) == text

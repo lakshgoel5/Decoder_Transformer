@@ -6,3 +6,6 @@
 
 python -m partb.train_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
     --output_tokenizer_path ./partb/final_tokenizer/
+
+python -m partb.evaluate_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
+    --tokenizer_path ./partb/final_tokenizer/

@@ -1,4 +1,8 @@
+import os
+import json
 from collections import defaultdict
+
+SPACE = "\u0120"
 
 class BPETokenizer:
     def __init__(self, vocab_size, special_tokens=None):
@@ -10,7 +14,7 @@ class BPETokenizer:
         self.merges = []
 
         self.vocab_size = vocab_size
-        self.special_tokens = special_tokens
+        self.special_tokens = special_tokens or []
 
         self.vocab = []
 
@@ -30,18 +34,18 @@ class BPETokenizer:
 
         # ------ add special tokens (later as they must not be split) ------- assign reserved token IDs
         for token in SPECIALS:
-            self.add_token(token, special = true) # Build vocab
+            self.add_token(token, special = True) # Build vocab
 
-    def add_token(token, special = False):
+    def add_token(self, token, special = False):
         pass
 
-    def get_best_pair(word_freqs):
+    def get_best_pair(self, word_freqs):
         pass
 
-    def apply_merge(pair, word_freqs):
+    def apply_merge(self, pair, word_freqs):
         pass
 
-    def apply_merge_order(pair, segmented):
+    def apply_merge_order(self, pair, segmented):
         pass
 
     def train(self, corpus):
@@ -82,7 +86,7 @@ class BPETokenizer:
             pair = self.get_best_pair(word_freqs)
 
             # ----- apply the merge ------
-            word_freq = self.apply_merge(pair, word_freqs)
+            word_freqs = self.apply_merge(pair, word_freqs)
 
             # ----- record the operation ------
             self.merges.append(pair)
@@ -163,12 +167,39 @@ class BPETokenizer:
         return text
 
     def save(self, filepath):
-        raise NotImplementedError("Save method not implemented yet.")
+        # raise NotImplementedError("Save method not implemented yet.")
         # Save Tokenizer state
+        os.makedirs(filepath, exist_ok=True)
+        save_path = os.path.join(filepath, "tokenizer.json")
+        state = {
+            "vocab_size": self.vocab_size,
+            "special_tokens": self.special_tokens,
+            "char_to_int": self.char_to_int,
+            "merges": self.merges,
+            "vocab": self.vocab,
+            "UNK_token": self.UNK_token
+        }
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
 
     def load(self, filepath):
-        raise NotImplementedError("Load method not implemented yet.")
+        # raise NotImplementedError("Load method not implemented yet.")
         # Load tokeniser state
+        load_path = os.path.join(filepath, "tokenizer.json")
+        if not os.path.exists(load_path):
+            raise FileNotFoundError(f"No tokenizer file found at {load_path}")
+            
+        with open(load_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        
+        self.vocab_size = state["vocab_size"]
+        self.special_tokens = state["special_tokens"]
+        self.char_to_int = state["char_to_int"]
+        self.int_to_char = {int(v): k for k, v in self.char_to_int.items()}
+        self.vocab = state["vocab"]
+        self.merges = [tuple(m) for m in state["merges"]]
+        self.UNK_token = state.get("UNK_token", "<|UNK|>")
+
     
     def get_vocab_size(self):
         # raise NotImplementedError("Get vocab size method not implemented yet.")

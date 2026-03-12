@@ -210,3 +210,5 @@ parta/data/
 visualize*
 viz*
 compare*
+final_tokenizer/
+*.txt

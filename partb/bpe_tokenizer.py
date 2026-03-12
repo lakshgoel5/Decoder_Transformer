@@ -6,10 +6,11 @@ SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
 
 class BPETokenizer:
-    def __init__(self, vocab_size, special_tokens=None):
+    def __init__(self, vocab_size=1000, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
         self.char_to_int = {}
         self.int_to_char = {}
+        self.iters = 100
 
         # Ordered
         self.merges = []
@@ -58,10 +59,42 @@ class BPETokenizer:
         return max(pairs, key=lambda p: (pairs[p], p))
 
     def apply_merge(self, pair, word_freqs):
-        pass
+        merged_pair = "".join(pair)
+
+        new_word_freqs = {}
+
+        for word_tuple, freq in word_freqs.items():
+            new_word_list = []
+            i = 0
+            while i < len(word_tuple):
+                if (i < len(word_tuple) - 1 and word_tuple[i] == pair[0] and word_tuple[i + 1] == pair[1]):
+                    new_word_list.append(merged_pair)
+                    i += 2
+                else:
+                    new_word_list.append(word_tuple[i])
+                    i += 1
+            new_word_freqs[tuple(new_word_list)] = freq
+
+        return new_word_freqs
 
     def apply_merge_order(self, pair, segmented):
-        pass
+        merged_pair = "".join(pair)
+
+        new_segmented = []
+
+        for word in segmented:
+            new_word = []
+            i = 0
+            while i < len(word):
+                if (i < len(word) - 1 and word[i] == pair[0] and word[i + 1] == pair[1]):
+                    new_word.append(merged_pair)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+            new_segmented.append(new_word)
+
+        return new_segmented
 
     def train(self, corpus):
         # raise NotImplementedError("Training method not implemented yet.")
@@ -94,7 +127,7 @@ class BPETokenizer:
         # working copy
         word_freqs = dict(self.frequency)
 
-        N = 10
+        N = self.iters
         # -------- repeat for n iterations
         for _ in range(N):
             # ----- select best pair(break ties) -------
@@ -119,6 +152,12 @@ class BPETokenizer:
             print(f"[TRAIN] Number of merges: {len(self.merges)}")
 
     def encode(self, text):
+        if isinstance(text, list):
+            # If text is a list, handle as a sequence of strings
+            all_token_ids = []
+            for item in text:
+                all_token_ids.extend(self.encode(item))
+            return all_token_ids
         # raise NotImplementedError("Encoding method not implemented yet.")
         # -------- text processing --------
         # Treat space character as a distinct token

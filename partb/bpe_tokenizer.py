@@ -10,7 +10,6 @@ class BPETokenizer:
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
         self.char_to_int = {}
         self.int_to_char = {}
-        self.iters = 100
 
         # Ordered
         self.merges = []
@@ -36,9 +35,11 @@ class BPETokenizer:
 
         # ------ add special tokens (later as they must not be split) ------- assign reserved token IDs
         for token in SPECIALS:
-            self.add_token(token, special = True) # Build vocab
+            self.add_token(token) # Build vocab
 
-    def add_token(self, token, special=False):
+        self.iters = 100
+
+    def add_token(self, token):
         if token not in self.char_to_int:
             idx = len(self.char_to_int)
             self.char_to_int[token] = idx
@@ -127,11 +128,14 @@ class BPETokenizer:
         # working copy
         word_freqs = dict(self.frequency)
 
-        N = self.iters
+        N = self.vocab_size - len(self.char_to_int)
         # -------- repeat for n iterations
-        for _ in range(N):
+        for _ in range(max(0,N)):
             # ----- select best pair(break ties) -------
             pair = self.get_best_pair(word_freqs)
+
+            if pair is None:  # no more pairs to merge
+                break
 
             # ----- apply the merge ------
             word_freqs = self.apply_merge(pair, word_freqs)
@@ -141,6 +145,7 @@ class BPETokenizer:
             self.add_token("".join(pair))
 
         if len(self.vocab) > self.vocab_size:
+            print(len(self.vocab), self.vocab_size)
             raise ValueError("Vocabulary size exceeded.")
 
         #DECODE
@@ -219,7 +224,7 @@ class BPETokenizer:
         # Handle any special tokens encountered #DEBUG
         # Correctly handle whitespace where space characters are tokenized
         text = "".join(tokens)
-        text = text.replace(SPACE, " ")
+        text = text.replace(SPACE, " ").strip()
 
         return text
 

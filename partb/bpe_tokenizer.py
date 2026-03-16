@@ -11,6 +11,8 @@ class BPETokenizer:
         self.char_to_int = {}
         self.int_to_char = {}
 
+        self.min_freq = 4
+
         # Ordered
         self.merges = []
 
@@ -46,37 +48,40 @@ class BPETokenizer:
             self.int_to_char[idx] = token
             self.vocab.append(token)
 
-    def get_best_pair(self, word_freqs):
-        pairs = defaultdict(int)
+    def get_best_pair(self, pair_counts):
+        return max(pair_counts.keys(), key=lambda p: (pair_counts[p], p))
 
-        for word_tuple, freq in word_freqs.items():
-            for i in range(len(word_tuple) - 1):
-                pairs[(word_tuple[i], word_tuple[i + 1])] += freq
-
-        if not pairs:
-            return None
-
-        # Break ties alphabetically
-        return max(pairs, key=lambda p: (pairs[p], p))
-
-    def apply_merge(self, pair, word_freqs):
+    def apply_merge(pair, pair_counts, pair_to_words, word_list, word_freq):
         merged_pair = "".join(pair)
 
-        new_word_freqs = {}
+        indices_to_update = list(pair_to_words[pair])
+        del pair_counts[pair] # That pair count removed
+        del pair_to_words[pair] # words associated with that pair removed
 
-        for word_tuple, freq in word_freqs.items():
-            new_word_list = []
-            i = 0
-            while i < len(word_tuple):
-                if (i < len(word_tuple) - 1 and word_tuple[i] == pair[0] and word_tuple[i + 1] == pair[1]):
-                    new_word_list.append(merged_pair)
-                    i += 2
+        for i in indices_to_update:
+            word_tuple = word_list[i]
+            # (h, a, pp, y)
+            word_frequency = word_freq[i]
+            # 5
+
+            new_word_tuple = []
+            j = 0
+            while j < len(word_tuple):
+                if j < len(word_tuple) - 1 and (word_tuple[j], word_tuple[j+1] == pair):
+                    new_word_tuple.append(merged_pair)
+                    j+=2
                 else:
-                    new_word_list.append(word_tuple[i])
-                    i += 1
-            new_word_freqs[tuple(new_word_list)] = freq
+                    new_word_tuple.append(word[j])
+                    j+=1
+            
+            new_word_tuple = tuple(new_word_tuple)
+            word_list[i] = new_word_tuple
+            # No change in word_frequency
 
-        return new_word_freqs
+            for j in range(len(new_word_tuple) - 1):
+                p = (new_word_tuple[j], new_word_tuple[j+1])
+                pair_counts[p] += word_frequency
+                pair_to_words[p].add(i)
 
     def apply_merge_order(self, pair, segmented):
         merged_pair = "".join(pair)
@@ -103,7 +108,9 @@ class BPETokenizer:
         # ----- Pair frequency counting ------
         word_freq = defaultdict(int)
         for word in corpus:
-            for token in word.split():
+            for token in word.split(" "):
+                if not tokens:
+                    continue
                 word_freq[token] += 1
         # example
         # the -> 5
@@ -128,17 +135,33 @@ class BPETokenizer:
         # working copy
         word_freqs = dict(self.frequency)
 
+        word_list = list(word_freqs.keys())
+        word_counts = list(word_freqs.values())
+
+        pair_counts = defaultdict(int)
+        pair_to_words = defaultdict(set)
+
+        for i, word in enumerate(word_list):
+            for j in range(len(word_tuple) - 1):
+                pair = (word_tuple[j], word_tuple[j+1])
+                pair_counts[pair] += word_counts[i]
+                pair_to_words[pair].add(i)
+
+
         N = self.vocab_size - len(self.char_to_int)
         # -------- repeat for n iterations
         for _ in range(max(0,N)):
             # ----- select best pair(break ties) -------
-            pair = self.get_best_pair(word_freqs)
+            pair = self.get_best_pair(pair_counts)
 
             if pair is None:  # no more pairs to merge
                 break
 
+            if pair_counts[pair] < self.min_freq:
+                break
+
             # ----- apply the merge ------
-            word_freqs = self.apply_merge(pair, word_freqs)
+            word_freqs = self.apply_merge(pair, pair_counts, pair_to_words, word_list, word_freq)
 
             # ----- record the operation ------
             self.merges.append(pair)

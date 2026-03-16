@@ -15,6 +15,7 @@ class BPETokenizer:
 
         # Ordered
         self.merges = []
+        self.merge_order = {}
 
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens or []
@@ -26,7 +27,7 @@ class BPETokenizer:
 
         self.UNK_token = "<|UNK|>"
 
-        SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>"]
+        SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>", SPACE]
 
         self.reserved_count = 10 # First 10 int's saved for reserved tokens
 
@@ -92,24 +93,32 @@ class BPETokenizer:
                 pair_counts[p] += word_frequency
                 pair_to_words[p].add(i)
 
-    def apply_merge_order(self, pair, segmented):
-        merged_pair = "".join(pair)
+    def apply_merge_order(self, chars):
+        # find merge index
+        while len(chars) > 1:
+            min_merge_idx = float('inf')
+            best_pair_index = -1
 
-        new_segmented = []
+            for j in range(len(chars) - 1):
+                pair = (chars[j], chars[j+1])
 
-        for word in segmented:
-            new_word = []
-            i = 0
-            while i < len(word):
-                if (i < len(word) - 1 and word[i] == pair[0] and word[i + 1] == pair[1]):
-                    new_word.append(merged_pair)
-                    i += 2
-                else:
-                    new_word.append(word[i])
-                    i += 1
-            new_segmented.append(new_word)
+                if pair in self.merge_order:
+                    idx = self.merge_order[pair]
+                    if idx < min_merge_idx:
+                        # update min_merge_idx
+                        min_merge_idx = idx
+                        best_pair_index = j
 
-        return new_segmented
+            if best_pair_index == -1:
+                break
+
+            pair = (chars[best_pair_index], chars[best_pair_index+1])
+            new_token = "".join(pair)
+            new_chars_list = chars[:best_pair_index] + [new_token] + chars[best_pair_index+2:]
+            chars = new_chars_list
+
+        return chars
+
 
     def train(self, corpus):
         # raise NotImplementedError("Training method not implemented yet.")
@@ -118,8 +127,6 @@ class BPETokenizer:
         word_freq = defaultdict(int)
         for word in corpus:
             for token in word.split(" "):
-                if not token:
-                    continue
                 word_freq[token] += 1
         # example
         # the -> 5
@@ -128,9 +135,12 @@ class BPETokenizer:
         unique = set()
         for word, freq in word_freq.items():
             chars = []
-            for i, c in enumerate(word):
-                token = (SPACE + c) if i==0 else c
-                chars.append(token) # List of chars
+            if word == " ":
+                chars = [SPACE]
+            else:
+                for i, c in enumerate(word):
+                    token = (SPACE + c) if i==0 else c
+                    chars.append(token) # List of chars
             # tuple(chars) -> tuple of list elements
             self.frequency[tuple(chars)] = freq
             unique.update(chars)
@@ -159,7 +169,7 @@ class BPETokenizer:
 
         N = self.vocab_size - len(self.char_to_int)
         # -------- repeat for n iterations
-        for _ in range(max(0,N)):
+        for i in range(max(0,N)):
             # ----- select best pair(break ties) -------
             pair = self.get_best_pair(pair_counts)
 
@@ -174,6 +184,7 @@ class BPETokenizer:
 
             # ----- record the operation ------
             self.merges.append(pair)
+            self.merge_order[pair] = i
             self.add_token("".join(pair))
 
         if len(self.vocab) > self.vocab_size:
@@ -198,45 +209,44 @@ class BPETokenizer:
         # raise NotImplementedError("Encoding method not implemented yet.")
         # -------- text processing --------
         # Treat space character as a distinct token
+        if not text:
+            return []
+            
         words = text.split(" ")
 
-        segmented = []
+        # segmented = []
+        token_ids = []
 
         unique = set()
         for word in words:
             chars = []
-            for i, c in enumerate(word):
-                token = (SPACE + c) if i==0 else c
-                if token in self.char_to_int:
-                    chars.append(token)
+            if word == "":
+                # Preserve the consecutive space!
+                if SPACE in self.char_to_int:
+                    chars.append(SPACE)
                 else:
-                    # Unknown character -> replace with UNK
                     chars.append(self.UNK_token)
+            else:
+                for i, c in enumerate(word):
+                    token = (SPACE + c) if i==0 else c
+                    if token in self.char_to_int:
+                        chars.append(token)
+                    else:
+                        # Unknown character -> replace with UNK
+                        chars.append(self.UNK_token)
             
             unique.update(chars)
 
-            segmented.append(chars) # segmented is list of lists
+            # Why save it, encode it here itself
+            # segmented.append(chars) # segmented is list of lists
+            # --------- Apply bpe merges ---------
+            # Iteratively apply merge operations in exact same order
+            chars = self.apply_merge_order(chars)
 
-        if DEBUG:
-            print(f"[ENCODE] Length of unique chars in text: {len(unique)}")
-            print(f"[ENCODE] Unque chars: {unique}")
-            print(f"[ENCODE] Segmented text: {segmented}")
-
-        # --------- Apply bpe merges ---------
-        # Iteratively apply merge operations in exact same order
-        for pair in self.merges:
-            segmented = self.apply_merge_order(pair, segmented)
-
-        if DEBUG:
-            print(f"[ENCODE] Length of segmented: {len(segmented)}")
-            print(f"[ENCODE] Segmented text: {segmented}")
-
-        # -------- Token ID conversion ---------
-        # Convert tokens to corresponding intiger IDs
-        # While handling unknown tokens using UNK
-        token_ids = []
-        for word in segmented:
-            for token in word:
+            # -------- Token ID conversion ---------
+            # Convert tokens to corresponding intiger IDs
+            # While handling unknown tokens using UNK
+            for token in chars:
                 if token in self.char_to_int:
                     token_ids.append(self.char_to_int[token])
                 else:
@@ -256,7 +266,7 @@ class BPETokenizer:
         # Handle any special tokens encountered #DEBUG
         # Correctly handle whitespace where space characters are tokenized
         text = "".join(tokens)
-        text = text.replace(SPACE, " ")
+        text = text.replace(SPACE, " ").strip()
 
         return text
 
@@ -292,6 +302,7 @@ class BPETokenizer:
         self.int_to_char = {int(v): k for k, v in self.char_to_int.items()}
         self.vocab = state["vocab"]
         self.merges = [tuple(m) for m in state["merges"]]
+        self.merge_order = {m: i for i, m in enumerate(self.merges)}
         self.UNK_token = state.get("UNK_token", "<|UNK|>")
 
     

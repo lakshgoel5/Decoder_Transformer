@@ -235,7 +235,7 @@ class BPETokenizer:
                 chars.append(SPACE)
             else:
                 if word_idx > 0:
-                    chars.append(SPACE)   # Ġ as SEPARATE token, not fused
+                    chars.append(SPACE)
                 for c in word:
                     if c in self.char_to_int:
                         chars.append(c)

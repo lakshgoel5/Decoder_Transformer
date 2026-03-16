@@ -1,6 +1,6 @@
 import os
 import json
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
@@ -11,7 +11,7 @@ class BPETokenizer:
         self.char_to_int = {}
         self.int_to_char = {}
 
-        self.min_freq = 4
+        self.min_freq = 2
 
         # Ordered
         self.merges = []
@@ -27,7 +27,7 @@ class BPETokenizer:
 
         self.UNK_token = "<|UNK|>"
 
-        SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>", SPACE]
+        SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>"]
 
         self.reserved_count = 10 # First 10 int's saved for reserved tokens
 
@@ -125,37 +125,48 @@ class BPETokenizer:
 
         # ----- Pair frequency counting ------
         word_freq = defaultdict(int)
-        for word in corpus:
-            for token in word.split(" "):
-                word_freq[token] += 1
+        for sentence in corpus:
+            words = sentence.split(' ')
+            word_freq[tuple(words[0])] += 1
+            for w in words[1:]:
+                word_freq[tuple(SPACE + w)] += 1
         # example
         # the -> 5
         # a -> 7
 
-        unique = set()
-        for word, freq in word_freq.items():
-            chars = []
-            if word == " ":
-                chars = [SPACE]
-            else:
-                for i, c in enumerate(word):
-                    token = (SPACE + c) if i==0 else c
-                    chars.append(token) # List of chars
-            # tuple(chars) -> tuple of list elements
-            self.frequency[tuple(chars)] = freq
-            unique.update(chars)
+        # unique = set()
+        # for word, freq in word_freq.items():
+        #     chars = []
+        #     if word == "":
+        #         chars = [SPACE]
+        #     else:
+        #         for i, c in enumerate(word):
+        #             token = (SPACE + c) if i==0 else c
+        #             chars.append(token) # List of chars
+        #     # tuple(chars) -> tuple of list elements
+        #     self.frequency[tuple(chars)] = freq
+        #     unique.update(chars)
         # example
         # (_t,h,e) -> 5
         # (_a) -> 7
 
-        for c in unique:
-            self.add_token(c) #Build vocabulary of characters
+        # for c in unique:
+        #     self.add_token(c) #Build vocabulary of characters
+
+        char_freqs = Counter()
+        for word, freq in word_freq.items():
+            for char in word:
+                char_freqs[char] += freq
+
+        max_base_chars = self.vocab_size - len(self.char_to_int)
+        for char, _ in char_freqs.most_common(max_base_chars):
+            self.add_token(char)
 
         # working copy
-        word_freqs = dict(self.frequency)
+        # word_freqs = dict(self.frequency)
 
-        word_list = list(word_freqs.keys())
-        word_counts = list(word_freqs.values())
+        word_list = list(word_freq.keys())
+        word_counts = list(word_freq.values())
 
         pair_counts = defaultdict(int)
         pair_to_words = defaultdict(set)
@@ -217,25 +228,20 @@ class BPETokenizer:
         # segmented = []
         token_ids = []
 
-        unique = set()
-        for word in words:
+        for word_idx, word in enumerate(words):
             chars = []
             if word == "":
                 # Preserve the consecutive space!
-                if SPACE in self.char_to_int:
-                    chars.append(SPACE)
-                else:
-                    chars.append(self.UNK_token)
+                chars.append(SPACE)
             else:
-                for i, c in enumerate(word):
-                    token = (SPACE + c) if i==0 else c
-                    if token in self.char_to_int:
-                        chars.append(token)
+                if word_idx > 0:
+                    chars.append(SPACE)   # Ġ as SEPARATE token, not fused
+                for c in word:
+                    if c in self.char_to_int:
+                        chars.append(c)
                     else:
-                        # Unknown character -> replace with UNK
                         chars.append(self.UNK_token)
             
-            unique.update(chars)
 
             # Why save it, encode it here itself
             # segmented.append(chars) # segmented is list of lists

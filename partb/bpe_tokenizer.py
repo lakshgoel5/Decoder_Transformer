@@ -1,6 +1,7 @@
 import os
 import json
 from collections import defaultdict, Counter
+import heapq
 
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
@@ -59,6 +60,8 @@ class BPETokenizer:
         del pair_counts[pair] # That pair count removed
         del pair_to_words[pair] # words associated with that pair removed
 
+        updated_pairs = set()
+
         for i in indices_to_update:
             word_tuple = word_list[i]
             # (h, a, pp, y)
@@ -92,6 +95,9 @@ class BPETokenizer:
                 p = (new_word_tuple[j], new_word_tuple[j+1])
                 pair_counts[p] += word_frequency
                 pair_to_words[p].add(i)
+                updated_pairs.add(p)
+        
+        return updated_pairs
 
     def apply_merge_order(self, chars):
         # find merge index
@@ -178,11 +184,19 @@ class BPETokenizer:
                 pair_to_words[pair].add(i)
 
 
+        heap = [(-c, p) for p, c in pair_counts.items()]
+        heapq.heapify(heap)
+
         N = self.vocab_size - len(self.char_to_int)
         # -------- repeat for n iterations
         for i in range(max(0,N)):
             # ----- select best pair(break ties) -------
-            pair = self.get_best_pair(pair_counts)
+            while heap:
+                negative_c, pair = heapq.heappop(heap)
+                if pair in pair_counts and pair_counts[pair] == -negative_c:
+                    break
+            else:
+                break
 
             if pair is None:  # no more pairs to merge
                 break
@@ -191,7 +205,11 @@ class BPETokenizer:
                 break
 
             # ----- apply the merge ------
-            self.apply_merge(pair, pair_counts, pair_to_words, word_list, word_counts)
+            updated_pairs = self.apply_merge(pair, pair_counts, pair_to_words, word_list, word_counts)
+
+            for p in updated_pairs:
+                if p in pair_counts:
+                    heapq.heappush(heap, (-pair_counts[p], p))
 
             # ----- record the operation ------
             self.merges.append(pair)

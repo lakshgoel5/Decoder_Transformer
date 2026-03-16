@@ -51,7 +51,7 @@ class BPETokenizer:
     def get_best_pair(self, pair_counts):
         return max(pair_counts.keys(), key=lambda p: (pair_counts[p], p))
 
-    def apply_merge(pair, pair_counts, pair_to_words, word_list, word_freq):
+    def apply_merge(self, pair, pair_counts, pair_to_words, word_list, word_counts):
         merged_pair = "".join(pair)
 
         indices_to_update = list(pair_to_words[pair])
@@ -61,17 +61,26 @@ class BPETokenizer:
         for i in indices_to_update:
             word_tuple = word_list[i]
             # (h, a, pp, y)
-            word_frequency = word_freq[i]
+            word_frequency = word_counts[i]
             # 5
+
+            # Remove damaged pairs as well
+            for j in range(len(word_tuple) - 1):
+                p = (word_tuple[j], word_tuple[j+1])
+                if p in pair_to_words and i in pair_to_words[p]:
+                    pair_to_words[p].remove(i)
+                pair_counts[p] -= word_frequency
+                if pair_counts[p] <= 0 and p in pair_counts:
+                    del pair_counts[p]
 
             new_word_tuple = []
             j = 0
             while j < len(word_tuple):
-                if j < len(word_tuple) - 1 and (word_tuple[j], word_tuple[j+1] == pair):
+                if j < len(word_tuple) - 1 and (word_tuple[j], word_tuple[j+1]) == pair:
                     new_word_tuple.append(merged_pair)
                     j+=2
                 else:
-                    new_word_tuple.append(word[j])
+                    new_word_tuple.append(word_tuple[j])
                     j+=1
             
             new_word_tuple = tuple(new_word_tuple)
@@ -109,7 +118,7 @@ class BPETokenizer:
         word_freq = defaultdict(int)
         for word in corpus:
             for token in word.split(" "):
-                if not tokens:
+                if not token:
                     continue
                 word_freq[token] += 1
         # example
@@ -142,8 +151,8 @@ class BPETokenizer:
         pair_to_words = defaultdict(set)
 
         for i, word in enumerate(word_list):
-            for j in range(len(word_tuple) - 1):
-                pair = (word_tuple[j], word_tuple[j+1])
+            for j in range(len(word) - 1):
+                pair = (word[j], word[j+1])
                 pair_counts[pair] += word_counts[i]
                 pair_to_words[pair].add(i)
 
@@ -161,7 +170,7 @@ class BPETokenizer:
                 break
 
             # ----- apply the merge ------
-            word_freqs = self.apply_merge(pair, pair_counts, pair_to_words, word_list, word_freq)
+            self.apply_merge(pair, pair_counts, pair_to_words, word_list, word_counts)
 
             # ----- record the operation ------
             self.merges.append(pair)
@@ -189,7 +198,7 @@ class BPETokenizer:
         # raise NotImplementedError("Encoding method not implemented yet.")
         # -------- text processing --------
         # Treat space character as a distinct token
-        words = text.split()
+        words = text.split(" ")
 
         segmented = []
 
@@ -247,7 +256,7 @@ class BPETokenizer:
         # Handle any special tokens encountered #DEBUG
         # Correctly handle whitespace where space characters are tokenized
         text = "".join(tokens)
-        text = text.replace(SPACE, " ").strip()
+        text = text.replace(SPACE, " ")
 
         return text
 

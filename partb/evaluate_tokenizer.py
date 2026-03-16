@@ -16,8 +16,8 @@ def test_tokenizer_consistency(tokenizer, corpus, encoded_corpus):
         reconstructed_sentence = tokenizer.decode(encoded_tokens)
         # assert original_sentence == reconstructed_sentence, f"Decoded text does not match original for sentence {i}!"
         if original_sentence != reconstructed_sentence:
-            print(f"Original: {original_sentence}")
-            print(f"Reconstructed: {reconstructed_sentence}")
+            # print(f"Original: {original_sentence}")
+            # print(f"Reconstructed: {reconstructed_sentence}")
             consistent = False
             inconsistent_sentences += 1
 

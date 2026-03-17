@@ -1,6 +1,7 @@
 import os
 import json
 from collections import defaultdict, Counter
+from tqdm import tqdm
 
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
@@ -180,7 +181,7 @@ class BPETokenizer:
 
         N = self.vocab_size - len(self.char_to_int)
         # -------- repeat for n iterations
-        for i in range(max(0,N)):
+        for i in tqdm(range(max(0, N)), desc="BPE training"):
             # ----- select best pair(break ties) -------
             pair = self.get_best_pair(pair_counts)
 

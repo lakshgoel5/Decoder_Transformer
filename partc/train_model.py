@@ -19,13 +19,21 @@ import os
 import json
 from pathlib import Path
 
-DEBUG = False
+DIM = True
 
-def encode_sentence(sentence, tokenizer_path):
-    """Encode a single sentence - used for multiprocessing"""
-    tokenizer = BPETokenizer()
-    tokenizer.load(tokenizer_path)
-    return tokenizer.encode(sentence)
+def init_worker(tokenizer_path):
+    global _tokenizer
+    _tokenizer = BPETokenizer()
+    _tokenizer.load(tokenizer_path)
+
+def encode_sentence(sentence):
+    return _tokenizer.encode(sentence)
+
+# def encode_sentence(sentence, tokenizer_path):
+#     """Encode a single sentence - used for multiprocessing"""
+#     tokenizer = BPETokenizer()
+#     tokenizer.load(tokenizer_path)
+#     return tokenizer.encode(sentence)
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
@@ -56,10 +64,9 @@ def main(args):
 
     # Parallel encoding of all sentences
     print("Encoding corpus in parallel...")
-    with Pool(processes=num_processes) as pool:
-        encode_func = partial(encode_sentence, tokenizer_path=args.tokenizer_path)
+    with Pool(processes=num_processes, initializer=init_worker, initargs=(args.tokenizer_path,)) as pool:
         encoded_corpus = list(tqdm(
-            pool.imap(encode_func, corpus, chunksize=max(1, len(corpus) // (num_processes * 4))),
+            pool.imap(encode_sentence, corpus, chunksize=max(1, len(corpus) // (num_processes * 4))),
             total=len(corpus),
             desc="Encoding"
         ))
@@ -75,7 +82,7 @@ def main(args):
 
     model = LanguageModel(config)
 
-    if DEBUG:
+    if DIM:
         total = 0
         for name, param in model.named_parameters():
             print(f"{name:60s} | {str(list(param.shape)):30s} | {param.numel():,}")
@@ -89,7 +96,7 @@ def main(args):
     # --- Optimizer and loss function ----
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    # Old code
+    # --Old code--
     # outputs = []
     # bsz = 16 # Batch size
     # for st in range(0, len(input_ids), bsz):

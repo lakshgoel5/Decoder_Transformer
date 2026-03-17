@@ -1,5 +1,35 @@
+from torch.utils.data import Dataset
+import torch
+
 def dummy_function():
     pass
+
+class TextDataset(Dataset): # child class
+    def __init__(self, encoded_corpus, max_len=2048):
+        self.encoded_corpus = encoded_corpus
+        self.samples = []
+        for tokens in encoded_corpus:
+            if len(tokens) < 2:
+                continue
+            # Chunk into max_len blocks
+            for i in range(0, len(tokens) - 1, max_len):
+                chunk = tokens[i : i + max_len + 1]  # +1 for the label shift
+                if len(chunk) >= 2:
+                    self.samples.append(chunk)
+        
+    def __getitem__(self, idx):
+        tokens = self.samples[idx]
+        input_ids = torch.tensor(tokens[:-1], dtype=torch.long)
+        labels = torch.tensor(tokens[1:],  dtype=torch.long)
+        attention_mask = torch.ones_like(input_ids)
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels
+        }
+    
+    def __len__(self):
+        return len(self.samples)
 
 def collate_fn(batch):
     PAD_ID = 0  # Assume 0 is the padding token ID
@@ -27,3 +57,12 @@ def collate_fn(batch):
         "attention_mask": padded_attention_mask,
         "labels": padded_labels
     }
+
+def compute_loss(logits, labels):
+    # cross_entropy expects 2D inputs for the data and 1D for the labels.
+    # logits shape: (B, L, V)
+    # labels shape: (B, L)
+    # logits.view(-1, logits.size(-1)): (B*L, V)
+    # labels.view(-1): (B*L,)
+    # ignore_index=-100: ignore the padding tokens
+    return torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100)

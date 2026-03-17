@@ -5,7 +5,7 @@ from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function, collate_fn  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_fn, TextDataset, compute_loss  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -38,7 +38,7 @@ def encode_sentence(sentence):
 
 BATCH_SIZE = 32
 NUM_EPOCHS = 10
-LR = 0.75
+LR = 0.0005
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
@@ -51,6 +51,8 @@ def main(args):
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
+
+    print(f"Training on {device}")
 
     os.makedirs(args.output_model_path, exist_ok=True)
 
@@ -101,7 +103,7 @@ def main(args):
     # --- Optimizer and loss function ----
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    train_dataset = None
+    train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
     # a dict with 3 keys: input_ids, attention_mask, labels
     # input ids, labels comes from __getitem__()

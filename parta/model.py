@@ -21,13 +21,26 @@ class TransformerBlock(nn.Module):
 
         d_model  = config["d_model"]
         n_heads  = config["n_heads"]
-        d_head   = config["d_head"]   
+        d_head   = config["d_head"]  
+        d_ff = config["d_ff"] 
 
+        # Q,K,V, merging heads
         self.W_Q_all = nn.Linear(d_model, n_heads * d_head, bias=False)
         self.W_K_all = nn.Linear(d_model, n_heads * d_head, bias=False)
         self.W_V_all = nn.Linear(d_model, n_heads * d_head, bias=False)
         self.W_O = nn.Linear(d_model, n_heads * d_head, bias=False)
         
+        # Feed forward
+        self.W_up = nn.Linear(d_model, d_ff, bias=True)
+        self.W_down = nn.Linear(d_ff, d_model, bias=True)
+
+        # Bias of W_up and W_down
+
+
+        self.gamma_1 = nn.Parameter(torch.ones(d_model))
+        self.beta_1  = nn.Parameter(torch.zeros(d_model))
+        self.gamma_2 = nn.Parameter(torch.ones(d_model))
+        self.beta_2  = nn.Parameter(torch.zeros(d_model))
 
     def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
@@ -171,7 +184,6 @@ class LanguageModel(nn.Module):
         """
         super().__init__()
         self.config = config
-        self.model_weights = None
         self.max_len = 2048
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
@@ -182,12 +194,17 @@ class LanguageModel(nn.Module):
             TransformerBlock(config, l + 1) for l in range(config["n_layers"])
         ])
 
+        d_model = self.config["d_model"]
+
+        self.gamma_final = nn.Parameter(torch.ones(d_model))
+        self.beta_final  = nn.Parameter(torch.zeros(d_model))
+        self.W_devocab = nn.Linear(d_model, config["vocab_size"], bias=False)
+
         # nn.Embedding is just a highly optimized lookup table (or dictionary) that maps integer token IDs to continuous, dense vectors (floating-point numbers).
         # It is an $O(1)$ memory pointer operation, making it incredibly fast.
         # (rows, columns) in table
         self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
 
-        d_model = self.config["d_model"]
         positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
         i = torch.arange(d_model, dtype=torch.float32) // 2 #(d_model)
         denominator = 10000 ** (2 * i / d_model) # (d_model)            
@@ -214,15 +231,15 @@ class LanguageModel(nn.Module):
         self.model_weights = nn.ParameterDict()
 
         # .copy_(): In PyTorch, any function that ends with an underscore (_) means it is an in-place operation. It directly replaces the existing values in memory with the new ones, rather than creating a brand-new tensor.
-        self.token_embedding.weight.data.copy_(weights["W_vocab"].T)
+        self.token_embedding.weight.data.copy_(weights["W_vocab"].T) # DEBUG: Left
 
-        self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"])
+        self.model_weights["W_devocab"] = nn.Parameter(weights["W_devocab"]) # Done
 
         num_layers = self.config["n_layers"]
         num_heads = self.config["n_heads"]
 
-        self.model_weights["beta_final"] = nn.Parameter(weights["beta_final"])
-        self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"])
+        self.model_weights["beta_final"] = nn.Parameter(weights["beta_final"]) # Done
+        self.model_weights["gamma_final"] = nn.Parameter(weights["gamma_final"]) # Done
 
         for l, block in enumerate(self.blocks, start=1):
 
@@ -261,23 +278,23 @@ class LanguageModel(nn.Module):
             block.W_V_all.weight = nn.Parameter(W_V_stacked.T)
 
             # self.model_weights[f"W_{l}_O"] = nn.Parameter(weights[f"W_{l}_O"].T)
-            w_o = weights[f"W_{l}_O"]
+            w_o = weights[f"W_{l}_O"] # Done
             block.W_O = nn.Linear(w_o.shape[1], w_o.shape[0], bias=False)
             block.W_O.weight = nn.Parameter(w_o.T)  # linear(x) = x @ weight.T = x @ w_o
 
             w_up = weights[f"W_{l}_up"]
             w_down = weights[f"W_{l}_down"]
-            block.W_up = nn.Linear(w_up.shape[0], w_up.shape[1], bias=True)
-            block.W_down = nn.Linear(w_down.shape[0], w_down.shape[1], bias=True)
+            block.W_up = nn.Linear(w_up.shape[0], w_up.shape[1], bias=True) # Done
+            block.W_down = nn.Linear(w_down.shape[0], w_down.shape[1], bias=True) # Done
             block.W_up.weight = nn.Parameter(w_up.T)
             block.W_down.weight = nn.Parameter(w_down.T)
-            block.W_up.bias = nn.Parameter(weights[f"b_{l}_up"])
-            block.W_down.bias = nn.Parameter(weights[f"b_{l}_down"])
+            block.W_up.bias = nn.Parameter(weights[f"b_{l}_up"]) # Done
+            block.W_down.bias = nn.Parameter(weights[f"b_{l}_down"]) # Done
 
-            block.beta_1 = nn.Parameter(weights[f"beta_{l}_1"])
-            block.beta_2 = nn.Parameter(weights[f"beta_{l}_2"])
-            block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"])
-            block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"])
+            block.beta_1 = nn.Parameter(weights[f"beta_{l}_1"]) # Done
+            block.beta_2 = nn.Parameter(weights[f"beta_{l}_2"]) # Done
+            block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"]) # Done
+            block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"]) # Done
 
     def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
         # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
@@ -336,17 +353,16 @@ class LanguageModel(nn.Module):
 
         if DEBUG:
             print("[DIM][FORWARD]X", X.shape)
-            print("[DIM][FORWARD]beta_final", self.model_weights["beta_final"].shape)
-            print("[DIM][FORWARD]gamma_final", self.model_weights["gamma_final"].shape)
+            print("[DIM][FORWARD]beta_final", self.beta_final.shape)
+            print("[DIM][FORWARD]gamma_final", self.gamma_final.shape)
         
-        X_final = layer_norm(X, self.model_weights["beta_final"], self.model_weights["gamma_final"])
+        X_final = layer_norm(X, self.beta_final, self.gamma_final)
 
         if DEBUG:
             print("[DIM][FORWARD]X_final", X_final.shape)
 
-        # self.model_weights["W_devocab"] -> (d_model, Vocab_size)
         # X_final -> (B, L, d_model)
-        logits = X_final @ self.model_weights["W_devocab"] # (B, L, Vocab_size)
+        logits = self.W_devocab(X_final)  # (B, L, Vocab_size)
 
         return logits
 

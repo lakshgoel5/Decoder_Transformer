@@ -11,6 +11,21 @@ from .utils import dummy_function  # Replace with actual utility functions as ne
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
 # You can create separate scripts for hyperparameter tuning if needed.
 from multiprocessing import Pool, cpu_count
+import torch
+from tqdm import tqdm
+from functools import partial
+import time
+import os
+import json
+from pathlib import Path
+
+DEBUG = False
+
+def encode_sentence(sentence, tokenizer_path):
+    """Encode a single sentence - used for multiprocessing"""
+    tokenizer = BPETokenizer()
+    tokenizer.load(tokenizer_path)
+    return tokenizer.encode(sentence)
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
@@ -30,6 +45,15 @@ def main(args):
     print(f"Tokenizer loaded from {args.tokenizer_path}.")
     unk_id = tokenizer.get_unk_id()
 
+    # --- Load corpus ----
+    corpus = []
+    with open(args.train_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            corpus.append(line.strip())
+    # DEBUG
+    # with open(args.train_path, 'r', encoding='utf-8') as f:
+    #     corpus = f.readlines()
+
     # Parallel encoding of all sentences
     print("Encoding corpus in parallel...")
     with Pool(processes=num_processes) as pool:
@@ -42,7 +66,7 @@ def main(args):
 
     # --- Initialize model ----
 
-    path = "./config.json"
+    path = Path("./partc/config.json")
     config = None
     with path.open("r", encoding="utf-8") as handle:
         config = json.load(handle)
@@ -50,6 +74,15 @@ def main(args):
     st = time.time()
 
     model = LanguageModel(config)
+
+    if DEBUG:
+        total = 0
+        for name, param in model.named_parameters():
+            print(f"{name:60s} | {str(list(param.shape)):30s} | {param.numel():,}")
+            total += param.numel()
+
+        print(f"\n[DEBUG][PARAMETERS] Total trainable parameters: {total:,}")
+
     model.train() # Dropout is Active; BatchNorm Updates stats
     model.to(device) # Move model to GPU
 

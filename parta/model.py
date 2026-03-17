@@ -11,7 +11,26 @@ from typing import Any, Dict, List
 # x.squeeze() -> removes all dimensions of size 1
 # e.g., (1, L, d_model).squeeze(0) -> (L, d_model)
 
-DEBUG = False
+# In nn layer, weights passed as (out_features, in_features)
+# Bias passed as (out_features)
+
+# In nn linera, PyTorch immediately initializes the weight matrix using Kaiming Uniform initialization by default. So the weights are random but intelligently random — not just noise.
+# But custom initialization is still better
+
+# nn.Linear(in_features, out_features)
+# nn.Embedding(num_embeddings, embedding_dim)
+
+DIM = True
+
+WEIGHT_TIEING = True
+
+# Initialization
+XAVIER = True
+NORMAL = False
+MEAN_INIT_WEIGHTS = 0.0
+STD_INIT_WEIGHTS = 0.02
+MEAN_INIT_EMBEDDING = 0.0
+STD_INIT_EMBEDDING = 0.02
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: Dict[str, Any], layer_idx: int):
@@ -19,23 +38,23 @@ class TransformerBlock(nn.Module):
         self.config = config
         self.layer_idx = layer_idx
 
-        d_model  = config["d_model"]
-        n_heads  = config["n_heads"]
-        d_head   = config["d_head"]  
-        d_ff = config["d_ff"] 
+        d_model = config["d_model"]
+        n_heads = config["n_heads"]
+        d_head = config["d_head"]  
+        d_ff = config["d_ff"]
 
         # Q,K,V, merging heads
-        self.W_Q_all = nn.Linear(d_model, n_heads * d_head, bias=False)
+        self.W_Q_all = nn.Linear(d_model, n_heads * d_head, bias=False) # (in_features, out_features)
         self.W_K_all = nn.Linear(d_model, n_heads * d_head, bias=False)
         self.W_V_all = nn.Linear(d_model, n_heads * d_head, bias=False)
-        self.W_O = nn.Linear(d_model, n_heads * d_head, bias=False)
+        # Join all heads to give d_model
+        self.W_O = nn.Linear(n_heads * d_head, d_model, bias=False)
         
         # Feed forward
         self.W_up = nn.Linear(d_model, d_ff, bias=True)
         self.W_down = nn.Linear(d_ff, d_model, bias=True)
 
-        # Bias of W_up and W_down
-
+        self.dropout = nn.Dropout(config.get("dropout", 0.1))
 
         self.gamma_1 = nn.Parameter(torch.ones(d_model))
         self.beta_1  = nn.Parameter(torch.zeros(d_model))
@@ -78,7 +97,7 @@ class TransformerBlock(nn.Module):
         # Weight Matrix of q_i * k_j where each row is for a word
         # How much token i should look at token j (as query is of i)
 
-        if DEBUG:
+        if DIM:
             print("[DIM][HEAD] q_all:", q_all.shape)
             print("[DIM][HEAD] k_all:", k_all.shape)
             print("[DIM][HEAD] v_all:", v_all.shape)
@@ -198,11 +217,12 @@ class LanguageModel(nn.Module):
 
         self.gamma_final = nn.Parameter(torch.ones(d_model))
         self.beta_final  = nn.Parameter(torch.zeros(d_model))
-        self.W_devocab = nn.Linear(d_model, config["vocab_size"], bias=False)
 
-        # nn.Embedding is just a highly optimized lookup table (or dictionary) that maps integer token IDs to continuous, dense vectors (floating-point numbers).
-        # It is an $O(1)$ memory pointer operation, making it incredibly fast.
-        # (rows, columns) in table
+        # Maps vectors to logits over vocab
+        self.W_devocab = nn.Linear(d_model, config["vocab_size"], bias=False) # (in_features, out_features)
+
+        # nn.Embedding is optimized specifically for this — instead of doing a full matrix multiply one_hot @ W, it does a direct memory lookup which is much faster.
+        # Each row is a token vector
         self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
 
         positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
@@ -214,6 +234,36 @@ class LanguageModel(nn.Module):
         pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
 
         self.register_buffer('pe', pe)
+
+        self.init_weights()
+
+    def init_weights(self):
+        # self.modules() is a method in PyTorch, typically used within a torch.nn.Module subclass, to return an iterator over all modules (layers) in a network, including the network itself and its submodules.
+
+        if XAVIER:
+            print("[INIT] Using Xavier Initialization\n")
+        else:
+            print("[INIT] Using Normal Initialization\n")
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+
+                if XAVIER:
+                    nn.init.xavier_normal_(m.weight)
+                else: # Fallback
+                    nn.init.normal_(m.weight, mean=MEAN_INIT_WEIGHTS, std=STD_INIT_WEIGHTS)
+
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, mean=MEAN_INIT_EMBEDDING, std=STD_INIT_EMBEDDING)
+
+        # Weight tying
+        # embedding normal weights dominate W_devocab
+        if WEIGHT_TIEING:
+            self.W_devocab.weight = self.token_embedding.weight
+                
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -317,7 +367,7 @@ class LanguageModel(nn.Module):
         pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
         pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
 
-        if DEBUG:
+        if DIM:
             print("[DIM][PE]positions", positions.shape)
             print("[DIM][PE]denominator", denominator.shape)
             print("[DIM][PE]pe", pe.shape)
@@ -344,25 +394,27 @@ class LanguageModel(nn.Module):
         # Get Positional Encoding
         X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
 
-        if DEBUG:
+        if DIM:
             print("[DIM][FORWARD]X", X.shape)
         
         # Transformer Blocks
         for block in self.blocks:
             X = block(X, attention_mask)
 
-        if DEBUG:
+        if DIM:
             print("[DIM][FORWARD]X", X.shape)
             print("[DIM][FORWARD]beta_final", self.beta_final.shape)
             print("[DIM][FORWARD]gamma_final", self.gamma_final.shape)
         
         X_final = layer_norm(X, self.beta_final, self.gamma_final)
 
-        if DEBUG:
+        if DIM:
             print("[DIM][FORWARD]X_final", X_final.shape)
 
         # X_final -> (B, L, d_model)
+        # each token has become a vector of size d_model that summarizes "what comes next?"
         logits = self.W_devocab(X_final)  # (B, L, Vocab_size)
+        # x.W + B
 
         return logits
 

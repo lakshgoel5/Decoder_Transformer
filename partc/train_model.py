@@ -5,7 +5,7 @@ from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_fn  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -18,6 +18,7 @@ import time
 import os
 import json
 from pathlib import Path
+from torch.utils.data import DataLoader
 
 DIM = True
 
@@ -35,6 +36,10 @@ def encode_sentence(sentence):
 #     tokenizer.load(tokenizer_path)
 #     return tokenizer.encode(sentence)
 
+BATCH_SIZE = 32
+NUM_EPOCHS = 10
+LR = 0.75
+
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
 
@@ -46,6 +51,8 @@ def main(args):
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
+
+    os.makedirs(args.output_model_path, exist_ok=True)
 
     # --- Load tokenizer ----
     tokenizer = BPETokenizer()
@@ -75,10 +82,8 @@ def main(args):
 
     path = Path("./partc/config.json")
     config = None
-    with path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-    st = time.time()
+    with path.open("r", encoding="utf-8") as f:
+        config = json.load(f)
 
     model = LanguageModel(config)
 
@@ -94,32 +99,55 @@ def main(args):
     model.to(device) # Move model to GPU
 
     # --- Optimizer and loss function ----
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    # --Old code--
-    # outputs = []
-    # bsz = 16 # Batch size
-    # for st in range(0, len(input_ids), bsz):
-    #     en = min(st + bsz, len(input_ids)) # End of batch
-    #     batch = {
-    #         "input_ids": [input_ids[i] for i in range(st, en)],
-    #         "attention_mask": [torch.ones_like(input_ids[i]) for i in range(st, en)]
-    #     }
-    #     padded_batch = collate_fn(batch)
-    #     padded_batch = {k: v.to(device) for k, v in padded_batch.items()}
-    #     with torch.no_grad():
-    #         logits = model(input_ids=padded_batch["input_ids"], attention_mask=padded_batch["attention_mask"])
-    #     logits = logits.cpu()
-    #     for i in range(en - st):
-    #         outputs.append({
-    #             "logits": logits[i][:len(batch["input_ids"][i])]
-    #         })
+    train_dataset = None
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
+    # a dict with 3 keys: input_ids, attention_mask, labels
+    # input ids, labels comes from __getitem__()
+    # attention mask comes from collate fn()
+    
 
     # --- Training loop ----
+    for epoch in range(1, NUM_EPOCHS + 1):
+        model.train()
+        total_loss = 0
 
+        st = time.time()
+
+        for batch in tqdm(train_dataloader, desc=f"Epoch {epoch}/{NUM_EPOCHS}"):
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            
+            optimizer.zero_grad()
+
+            logits = model(input_ids, attention_mask)
+            loss = compute_loss(logits, labels)
+
+            loss.backward() # Backprop — compute gradients for every weight
+
+            optimizer.step() # Update weights using gradients
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(train_dataloader)
+        print(f"Epoch {epoch}/{NUM_EPOCHS} | Avg Loss: {avg_loss:.4f} | Time: {time.time() - st:.2f}s")
+
+        ppl = torch.exp(torch.tensor(avg_loss)).item()
+        print(f"Epoch {epoch}/{NUM_EPOCHS} | PPL: {ppl:.4f}")
+            
     # --- Run validation and model selection ---
+    # Last day
 
     # --- Save best performing model ----
+    checkpoint_path = os.path.join(args.output_model_path, "best_model.pt")
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "config": config,
+        "epoch": epoch,
+        # "valid_loss": best_valid_loss,
+    }, checkpoint_path)
 
 
 

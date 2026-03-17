@@ -19,6 +19,16 @@ class TransformerBlock(nn.Module):
         self.config = config
         self.layer_idx = layer_idx
 
+        d_model  = config["d_model"]
+        n_heads  = config["n_heads"]
+        d_head   = config["d_head"]   
+
+        self.W_Q_all = nn.Linear(d_model, n_heads * d_head, bias=False)
+        self.W_K_all = nn.Linear(d_model, n_heads * d_head, bias=False)
+        self.W_V_all = nn.Linear(d_model, n_heads * d_head, bias=False)
+        self.W_O = nn.Linear(d_model, n_heads * d_head, bias=False)
+        
+
     def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
@@ -159,8 +169,8 @@ class LanguageModel(nn.Module):
         """
         Build the LanguageModel based on the config.
         """
-        self.config = config
         super().__init__()
+        self.config = config
         self.model_weights = None
         self.max_len = 2048
 

@@ -24,10 +24,10 @@ if [ "$1" == "--train-tokenizer" ]; then
     echo "No need to train the tokenizer again."
 
     # UNCOMMENT the line below to train the tokenizer.
-    # echo "Training the tokenizer..."
-    # python -m partb.train_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
-    #   --train_path ./data/train.txt \
-    #   --output_tokenizer_path ./partb/final_tokenizer/
+    echo "Training the tokenizer..."
+    python -m partb.train_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
+      --train_path ./data/train.txt \
+      --output_tokenizer_path ./partb/final_tokenizer/
 
 elif [ "$1" == "--train-model" ]; then
     echo "Training the model..."

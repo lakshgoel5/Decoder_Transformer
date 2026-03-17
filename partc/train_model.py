@@ -10,9 +10,77 @@ from .utils import dummy_function  # Replace with actual utility functions as ne
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
 # You can create separate scripts for hyperparameter tuning if needed.
+from multiprocessing import Pool, cpu_count
 
 def main(args):
-    raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
+    # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
+
+    # Determine number of processes to use
+    num_processes = cpu_count()
+
+    # GPUs
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    # --- Load tokenizer ----
+    tokenizer = BPETokenizer()
+    tokenizer.load(args.tokenizer_path)
+    print(f"Tokenizer loaded from {args.tokenizer_path}.")
+    unk_id = tokenizer.get_unk_id()
+
+    # Parallel encoding of all sentences
+    print("Encoding corpus in parallel...")
+    with Pool(processes=num_processes) as pool:
+        encode_func = partial(encode_sentence, tokenizer_path=args.tokenizer_path)
+        encoded_corpus = list(tqdm(
+            pool.imap(encode_func, corpus, chunksize=max(1, len(corpus) // (num_processes * 4))),
+            total=len(corpus),
+            desc="Encoding"
+        ))
+
+    # --- Initialize model ----
+
+    path = "./config.json"
+    config = None
+    with path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+
+    st = time.time()
+
+    model = LanguageModel(config)
+    model.train() # Dropout is Active; BatchNorm Updates stats
+    model.to(device) # Move model to GPU
+
+    # --- Optimizer and loss function ----
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+    # Old code
+    # outputs = []
+    # bsz = 16 # Batch size
+    # for st in range(0, len(input_ids), bsz):
+    #     en = min(st + bsz, len(input_ids)) # End of batch
+    #     batch = {
+    #         "input_ids": [input_ids[i] for i in range(st, en)],
+    #         "attention_mask": [torch.ones_like(input_ids[i]) for i in range(st, en)]
+    #     }
+    #     padded_batch = collate_fn(batch)
+    #     padded_batch = {k: v.to(device) for k, v in padded_batch.items()}
+    #     with torch.no_grad():
+    #         logits = model(input_ids=padded_batch["input_ids"], attention_mask=padded_batch["attention_mask"])
+    #     logits = logits.cpu()
+    #     for i in range(en - st):
+    #         outputs.append({
+    #             "logits": logits[i][:len(batch["input_ids"][i])]
+    #         })
+
+    # --- Training loop ----
+
+    # --- Run validation and model selection ---
+
+    # --- Save best performing model ----
+
 
 
 if __name__ == '__main__':

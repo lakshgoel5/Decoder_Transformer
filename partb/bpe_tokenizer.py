@@ -6,6 +6,24 @@ from tqdm import tqdm
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
 
+# Knowledge of Hindi vibhakti
+# Vowels in Hindi are called svar (स्वर). There are 13 vowels in total. They appear in two forms: their full, independent form when they start a word or stand alone, and their diacritic (mātrā) form when they are attached to a consonant to change its vowel sound.
+# The first vowel, अ (a), is special. It has no mātrā because it's the inherent vowel sound automatically included with every consonant. All other vowels have a corresponding diacritic mark.
+
+# Problem 1 — Matras (vowel diacritics) get split from their consonant
+# BPE might split `का` into `क` + `ा` — which is meaningless. `ा` alone has no pronunciation.
+
+# Problem 2 — Nukta characters
+# क़, ख़, ग़, ज़, ड़, ढ़, फ़  
+# These are consonant + nukta (़) 
+# BPE might separate the nukta from its consonant
+
+# r stands for raw string, so that \u is treated as a unicode character and not an escape sequence
+DEVANAGARI_CHAR = r'\u0900-\u097F'
+VEDIC_EXT = r'\u1CD0–\u1CFF'
+DEVANAGARI_EXT = r'\uA8E0–\uA8FF'
+
+
 class BPETokenizer:
     def __init__(self, vocab_size=1000, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
@@ -42,6 +60,27 @@ class BPETokenizer:
             self.add_token(token) # Build vocab
 
         self.iters = 100
+
+
+        HINDI_PROTECTED = [
+            # Vibhakti: particles added to nouns or pronouns to indicate their role in a sentence: 7 types
+            "ने", "को", "से", "का", "के", "की", "में", "पर", "तक",
+            "के लिए", "की तरह", "के बाद", "के पास",
+            
+            # Hindi verbs are formed by adding suffixes to the root (Dhatu). The verb changes based on tense, gender, and number.
+            "ता", "ती", "ते", "ना", "नी", "ने",
+            "गा", "गी", "गे", # future tense
+            "था", "थी", "थे", # past tense  
+            "है", "हैं", "हो", "हूँ", # present tense
+            
+            # Pratyaya are words added to the end of words to create new meanings.
+            "वाला", "वाली", "वाले", # agent/adjective marker
+            "ों", "यों", # plural oblique
+            
+            # High frequency function words
+            "और", "या", "कि", "जो", "तो", "भी", "ही", "न", "नहीं",
+            "यह", "वह", "वे", "हम", "आप", "मैं", "तुम",
+        ]
 
     def add_token(self, token):
         if token not in self.char_to_int:

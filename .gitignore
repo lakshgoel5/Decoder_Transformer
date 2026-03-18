@@ -214,3 +214,4 @@ final_tokenizer/
 *.txt
 dataset*
 *store
+final_model/

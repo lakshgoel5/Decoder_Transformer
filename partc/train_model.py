@@ -5,7 +5,7 @@ from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function, collate_fn, TextDataset, compute_loss  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_fn, TextDataset, compute_loss, evaluate, compute_bpc  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -20,6 +20,16 @@ import json
 from pathlib import Path
 from torch.utils.data import DataLoader
 import datetime
+
+# Allowed
+# DataLoader, Adam, Cross entropy, Unicodedata, Regex
+
+# Not allowed
+# torch.nn.functional.scaled_dot_product_attention is not allowed
+# flash attention
+
+# Design choice
+# Vocab size
 
 DIM = True
 
@@ -67,12 +77,18 @@ def main(args):
 
     # --- Load corpus ----
     corpus = []
+    train_char_lengths = []
     with open(args.train_path, 'r', encoding='utf-8') as f:
         for line in f:
-            corpus.append(line.strip())
+            text = line.strip()
+            corpus.append(text)
+            train_char_lengths.append(len(text))
     # DEBUG
     # with open(args.train_path, 'r', encoding='utf-8') as f:
     #     corpus = f.readlines()
+
+    # --- Load validation corpus (for BPC / selection) ----
+    # Later
 
     # Parallel encoding of all sentences
     print("Encoding corpus in parallel...")
@@ -112,6 +128,8 @@ def main(args):
     # input ids, labels comes from __getitem__()
     # attention mask comes from collate fn()
 
+    # In validation, shuffle = False
+
 
     # ---stats---
     training_start = time.time()
@@ -120,7 +138,9 @@ def main(args):
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):
         model.train()
-        total_loss = 0
+        total_loss = 0.0
+        total_loss_sum = 0.0
+        total_tokens = 0
 
         st = time.time()
 
@@ -140,18 +160,28 @@ def main(args):
 
             total_loss += loss.item()
 
+            with torch.no_grad():
+                # labels == -100 are ignored positions
+                mask = (labels != -100)
+                batch_tokens = mask.sum().item()
+                total_tokens += batch_tokens
+                total_loss_sum += loss.item() * batch_tokens
+
             total_tokens_processed += input_ids.numel()
 
         avg_loss = total_loss / len(train_dataloader)
         ppl = torch.exp(torch.tensor(avg_loss)).item()
 
+        train_bpc = compute_bpc(total_loss_sum, sum(train_char_lengths))
+
         elapsed_total = time.time() - training_start
-        tokens_per_sec = total_tokens_processed / elapsed_total
+        tokens_per_sec = total_tokens_processed / max(elapsed_total, 1e-8)
         eta_seconds = (NUM_EPOCHS - epoch) * (time.time() - st)
 
         print(
             f"Epoch {epoch}/{NUM_EPOCHS} | "
             f"Loss: {avg_loss:.4f} | PPL: {ppl:.2f} | "
+            f"Train BPC: {train_bpc:.4f} | "
             f"Epoch time: {time.time()-st:.1f}s | "
             f"Total elapsed: {str(datetime.timedelta(seconds=int(elapsed_total)))} | "
             f"ETA: {str(datetime.timedelta(seconds=int(eta_seconds)))} | "
@@ -163,12 +193,14 @@ def main(args):
 
     # --- Save best performing model ----
     checkpoint_path = os.path.join(args.output_model_path, "best_model.pt")
-    torch.save({
-        "model_state_dict": model.state_dict(),
-        "config": config,
-        "epoch": epoch,
-        # "valid_loss": best_valid_loss,
-    }, checkpoint_path)
+    if best_checkpoint is None:
+        # fallback: save last model
+        best_checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "config": config,
+            "epoch": epoch,
+        }
+    torch.save(best_checkpoint, checkpoint_path)
 
 
 

@@ -35,6 +35,10 @@ from torch.optim.lr_scheduler import LambdaLR
 
 DIM = True
 ADAM_W = False
+FRACTION_WARMUP = 0.1
+
+COSINE_LR = True
+LINEAR_LR = False
 
 def init_worker(tokenizer_path):
     global _tokenizer
@@ -123,11 +127,37 @@ def main(args):
     model.to(device) # Move model to GPU
 
     # --- Optimizer and loss function ----
-    # TODO: Implement AdamW with weight decay and learning rate scheduling if needed
     if ADAM_W:
-        pass
+        print("[OPTIMIZER] Using AdamW with Weight Decay")
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1, betas=(0.9, 0.95))
+        # First beta: This tracks the average of past gradients. A value of 0.9 means the optimizer relies heavily on the direction it was already going, helping it barrel through noisy batches.
+        # Second beta: This tracks the average of past squared gradients to scale the learning rate for each specific weight.
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+    total_steps = NUM_EPOCHS * (len(encoded_corpus) // BATCH_SIZE)
+    warmup_steps = int(FRACTION_WARMUP * total_steps) # FRACTION_WARMUP of training steps for warmup
+
+    def lr_lambda(current_step):
+        lr = None
+        if LINEAR_LR:
+            if current_step < warmup_steps:
+                return float(current_step) / float(max(1, warmup_steps)) # Gradually increasing to 1
+            return max(0.0, float(total_steps - current_step) / float(max(1, total_steps - warmup_steps))) # Linearly decay to 0 after warmup
+        else:
+            if current_step < warmup_steps:
+                return float(current_step) / float(max(1, warmup_steps)) # Gradually increasing to 1
+            
+            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            # progress goes from 0 to 1 over the course of training after warmup
+            # cos(0) = 1, cos(pi) = -1, so this will decay from 1 to 0 following a cosine curve
+
+            lr = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return lr
+
+    # Tool to adjust Learning rate
+    # new_lr = initial_lr * lr_lambda(epoch)
+    scheduler = LambdaLR(optimizer, lr_lambda)
 
     train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
@@ -163,9 +193,11 @@ def main(args):
 
             loss.backward() # Backprop — compute gradients for every weight
 
-            # TODO: gradient clipping if needed
+            # Gradient Clipping (Clip to max norm of 1.0) # DEBUG Parameter
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step() # Update weights using gradients
+            scheduler.step()
 
             total_loss += loss.item()
 

@@ -5,9 +5,11 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
+COUNTER = 0
 
 # Assert that encoding and then decoding gives back the original sentence.
 def test_tokenizer_consistency(tokenizer, corpus, encoded_corpus):
+    global COUNTER
     consistent = True
     inconsistent_sentences = 0
     for i in range(len(corpus)):
@@ -16,8 +18,11 @@ def test_tokenizer_consistency(tokenizer, corpus, encoded_corpus):
         reconstructed_sentence = tokenizer.decode(encoded_tokens)
         # assert original_sentence == reconstructed_sentence, f"Decoded text does not match original for sentence {i}!"
         if original_sentence != reconstructed_sentence:
-            # print(f"Original: {original_sentence}")
-            # print(f"Reconstructed: {reconstructed_sentence}")
+            if COUNTER < 5:
+                print(f"Original: {original_sentence}")
+                print(f"Reconstructed: {reconstructed_sentence}")
+                COUNTER +=1
+
             consistent = False
             inconsistent_sentences += 1
 

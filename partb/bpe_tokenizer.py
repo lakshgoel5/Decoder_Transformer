@@ -2,6 +2,8 @@ import os
 import json
 from collections import defaultdict, Counter
 from tqdm import tqdm
+import unicodedata
+import re
 
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
@@ -22,10 +24,13 @@ DEBUG = False
 DEVANAGARI_CHAR = r'\u0900-\u097F'
 VEDIC_EXT = r'\u1CD0–\u1CFF'
 DEVANAGARI_EXT = r'\uA8E0–\uA8FF'
-
+MATRAS = set('\u093C\u093E\u093F\u0940\u0941\u0942\u0943\u0944'
+             '\u0945\u0946\u0947\u0948\u0949\u094A\u094B\u094C'
+             '\u094E\u094F\u0902\u0903\u0901')
+HALANT = '\u094D'
 
 class BPETokenizer:
-    def __init__(self, vocab_size=1000, special_tokens=None):
+    def __init__(self, vocab_size=10000, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
         self.char_to_int = {}
         self.int_to_char = {}
@@ -48,21 +53,7 @@ class BPETokenizer:
 
         SPECIALS = ["<|PAD|>", "<|UNK|>", "<|EOS|>"]
 
-        self.reserved_count = 10 # First 10 int's saved for reserved tokens
-
-        for token in self.special_tokens:
-            if token not in SPECIALS:
-                SPECIALS.append(token)
-        # Special has all special tokens
-
-        # ------ add special tokens (later as they must not be split) ------- assign reserved token IDs
-        for token in SPECIALS:
-            self.add_token(token) # Build vocab
-
-        self.iters = 100
-
-
-        HINDI_PROTECTED = [
+        self.HINDI_PROTECTED = [
             # Vibhakti: particles added to nouns or pronouns to indicate their role in a sentence: 7 types
             "ने", "को", "से", "का", "के", "की", "में", "पर", "तक",
             "के लिए", "की तरह", "के बाद", "के पास",
@@ -81,6 +72,38 @@ class BPETokenizer:
             "और", "या", "कि", "जो", "तो", "भी", "ही", "न", "नहीं",
             "यह", "वह", "वे", "हम", "आप", "मैं", "तुम",
         ]
+
+        self.protected_tokens = set(self.HINDI_PROTECTED) # O(1) lookup
+
+        self.PUNCTUATIONS = [
+            # Punctuation
+            "।", "।।", ",", "!", "?", "-", "—", "(", ")", "\"", "'", ":", ";", "||", "| |", "|"
+        ]
+
+        self.reserved_count = 10 # First 10 int's saved for reserved tokens
+
+        for token in self.special_tokens:
+            if token not in SPECIALS:
+                SPECIALS.append(token)
+        # Special has all special tokens
+
+        # ------ add special tokens (later as they must not be split) ------- assign reserved token IDs
+        for token in SPECIALS:
+            self.add_token(token) # Build vocab
+
+        for token in self.HINDI_PROTECTED:
+            self.add_token(token)
+
+        for token in self.PUNCTUATIONS:
+            self.add_token(token)
+
+        self.iters = 100
+
+    def normalize_hindi(self, text):
+        for punc in self.PUNCTUATIONS:
+            text = text.replace(punc, f" {punc} ")
+
+        return text
 
     def add_token(self, token):
         if token not in self.char_to_int:
@@ -158,40 +181,86 @@ class BPETokenizer:
             chars = new_chars_list
 
         return chars
+    
+    # Solving problems defiend above
+    def word_to_unit(self, word):
+        units = []
+        i = 0
+
+        while i < len(word):
+            # Protected tokens (longest match first)
+            matched = False
+            for token in sorted(self.protected_tokens, key=len, reverse=True):
+                if word[i:].startswith(token):
+                    units.append(token)
+                    i += len(token)
+                    matched = True
+                    break
+            if matched:
+                continue
+
+            # SPACE
+            if word[i] == SPACE:
+                units.append(SPACE)
+                i += 1
+                continue
+
+            # Punctuation (longest match first)
+            punc_matched = False
+            for punc in sorted(self.PUNCTUATIONS, key=len, reverse=True):
+                if word[i:].startswith(punc):
+                    units.append(punc)
+                    i += len(punc)
+                    punc_matched = True
+                    break
+            if punc_matched:
+                continue
+
+            # Devanagari unit — consonant + matras/halant
+            unit = word[i]
+            i += 1
+            while i < len(word):
+                c = word[i]
+                if c in MATRAS:
+                    unit += c
+                    i += 1
+                elif c == HALANT:
+                    if i + 1 < len(word):# normal case — glue next consonant
+                        unit += c + word[i + 1]
+                        i += 2
+                    else: # trailing halant — glue it anyway
+                        unit += c
+                        i += 1
+                else:
+                    break
+            units.append(unit)
+
+        return units
+            
 
 
     def train(self, corpus):
         # raise NotImplementedError("Training method not implemented yet.")
 
+        corpus = [unicodedata.normalize('NFC', sentence) for sentence in corpus]
+
         # ----- Pair frequency counting ------
         word_freq = defaultdict(int)
         for sentence in corpus:
             words = sentence.split(' ')
-            word_freq[tuple(words[0])] += 1
-            for w in words[1:]:
-                word_freq[tuple(SPACE + w)] += 1
-        # example
-        # the -> 5
-        # a -> 7
+            for w_idx, w in enumerate(words):
 
-        # unique = set()
-        # for word, freq in word_freq.items():
-        #     chars = []
-        #     if word == "":
-        #         chars = [SPACE]
-        #     else:
-        #         for i, c in enumerate(word):
-        #             token = (SPACE + c) if i==0 else c
-        #             chars.append(token) # List of chars
-        #     # tuple(chars) -> tuple of list elements
-        #     self.frequency[tuple(chars)] = freq
-        #     unique.update(chars)
+                if not w: # Skip training spaces
+                    continue
+
+                prefix = '' if w_idx == 0 else SPACE
+                # unit = self.word_to_unit(prefix + w)
+                unit = prefix + w
+                if unit:
+                    word_freq[tuple(unit)] += 1
         # example
         # (_t,h,e) -> 5
         # (_a) -> 7
-
-        # for c in unique:
-        #     self.add_token(c) #Build vocabulary of characters
 
         char_freqs = Counter()
         for word, freq in word_freq.items():
@@ -201,9 +270,6 @@ class BPETokenizer:
         max_base_chars = self.vocab_size - len(self.char_to_int)
         for char, _ in char_freqs.most_common(max_base_chars):
             self.add_token(char)
-
-        # working copy
-        # word_freqs = dict(self.frequency)
 
         word_list = list(word_freq.keys())
         word_counts = list(word_freq.values())
@@ -262,10 +328,10 @@ class BPETokenizer:
         # Treat space character as a distinct token
         if not text:
             return []
+        
+        text = unicodedata.normalize('NFC', text)
             
         words = text.split(" ")
-
-        # segmented = []
         token_ids = []
 
         for word_idx, word in enumerate(words):
@@ -274,9 +340,10 @@ class BPETokenizer:
                 # Preserve the consecutive space!
                 chars.append(SPACE)
             else:
-                if word_idx > 0:
-                    chars.append(SPACE)
-                for c in word:
+                prefix = "" if word_idx == 0 else SPACE
+                # unit = self.word_to_unit(prefix + word)
+                unit = prefix + word
+                for c in unit:
                     if c in self.char_to_int:
                         chars.append(c)
                     else:
@@ -293,11 +360,8 @@ class BPETokenizer:
             # Convert tokens to corresponding intiger IDs
             # While handling unknown tokens using UNK
             for token in chars:
-                if token in self.char_to_int:
-                    token_ids.append(self.char_to_int[token])
-                else:
-                    token_ids.append(self.char_to_int[self.UNK_token])
-        
+                token_ids.append(self.char_to_int.get(token, self.char_to_int[self.UNK_token]))
+
         return token_ids
 
     def decode(self, token_ids):
@@ -327,7 +391,9 @@ class BPETokenizer:
             "char_to_int": self.char_to_int,
             "merges": self.merges,
             "vocab": self.vocab,
-            "UNK_token": self.UNK_token
+            "UNK_token": self.UNK_token,
+            "PUNCTUATIONS": self.PUNCTUATIONS,
+            "HINDI_PROTECTED": self.HINDI_PROTECTED
         }
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=4)
@@ -350,6 +416,9 @@ class BPETokenizer:
         self.merges = [tuple(m) for m in state["merges"]]
         self.merge_order = {m: i for i, m in enumerate(self.merges)}
         self.UNK_token = state.get("UNK_token", "<|UNK|>")
+        self.PUNCTUATIONS = state.get("PUNCTUATIONS", [])
+        self.HINDI_PROTECTED = state.get("HINDI_PROTECTED", [])
+        self.protected_tokens = set(self.HINDI_PROTECTED)
 
     
     def get_vocab_size(self):

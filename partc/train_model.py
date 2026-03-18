@@ -37,6 +37,8 @@ DIM = False
 ADAM_W = True
 FRACTION_WARMUP = 0.1
 
+GRAD_CLIP_NORM = 1.0
+
 COSINE_LR = True
 LINEAR_LR = False
 
@@ -193,8 +195,8 @@ def main(args):
 
             loss.backward() # Backprop — compute gradients for every weight
 
-            # Gradient Clipping (Clip to max norm of 1.0) # DEBUG Parameter
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Gradient Clipping # DEBUG Parameter
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
 
             optimizer.step() # Update weights using gradients
             scheduler.step()

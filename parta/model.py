@@ -39,7 +39,7 @@ ALIBI = False
 LEARNED_PE = False
 
 # Activation in FFN
-SWIGLU = False
+SWIGLU = True
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: Dict[str, Any], layer_idx: int):
@@ -62,6 +62,7 @@ class TransformerBlock(nn.Module):
         # Feed forward
         self.W_up = nn.Linear(d_model, d_ff, bias=True)
         self.W_down = nn.Linear(d_ff, d_model, bias=True)
+        self.W_gate = nn.Linear(d_model, d_ff, bias=True) # For SwiGLU
 
         self.dropout = nn.Dropout(config.get("dropout", 0.1))
 
@@ -168,6 +169,8 @@ class TransformerBlock(nn.Module):
         activation = None
         if SWIGLU:
             print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
+            gate = torch.nn.functional.silu(self.W_gate(x))
+            activation = gate * up
         else:
             activation = torch.nn.functional.gelu(up)
 

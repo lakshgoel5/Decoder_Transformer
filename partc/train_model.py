@@ -19,6 +19,7 @@ import os
 import json
 from pathlib import Path
 from torch.utils.data import DataLoader
+import datetime
 
 DIM = True
 
@@ -110,7 +111,11 @@ def main(args):
     # a dict with 3 keys: input_ids, attention_mask, labels
     # input ids, labels comes from __getitem__()
     # attention mask comes from collate fn()
-    
+
+
+    # ---stats---
+    training_start = time.time()
+    total_tokens_processed = 0
 
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):
@@ -135,11 +140,23 @@ def main(args):
 
             total_loss += loss.item()
 
-        avg_loss = total_loss / len(train_dataloader)
-        print(f"Epoch {epoch}/{NUM_EPOCHS} | Avg Loss: {avg_loss:.4f} | Time: {time.time() - st:.2f}s")
+            total_tokens_processed += input_ids.numel()
 
+        avg_loss = total_loss / len(train_dataloader)
         ppl = torch.exp(torch.tensor(avg_loss)).item()
-        print(f"Epoch {epoch}/{NUM_EPOCHS} | PPL: {ppl:.4f}")
+
+        elapsed_total = time.time() - training_start
+        tokens_per_sec = total_tokens_processed / elapsed_total
+        eta_seconds = (NUM_EPOCHS - epoch) * (time.time() - st)
+
+        print(
+            f"Epoch {epoch}/{NUM_EPOCHS} | "
+            f"Loss: {avg_loss:.4f} | PPL: {ppl:.2f} | "
+            f"Epoch time: {time.time()-st:.1f}s | "
+            f"Total elapsed: {str(datetime.timedelta(seconds=int(elapsed_total)))} | "
+            f"ETA: {str(datetime.timedelta(seconds=int(eta_seconds)))} | "
+            f"Tokens/sec: {tokens_per_sec:.0f}"
+        )
             
     # --- Run validation and model selection ---
     # Last day

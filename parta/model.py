@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Any, Dict, List
+import datetime
 
 # x.unsqueeze(dim) -> adds a dimension of size 1 at the given dimension
 # x.unsqueeze(0) -> (1, L, d_model)
@@ -225,17 +226,20 @@ class LanguageModel(nn.Module):
         # Each row is a token vector
         self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
 
+        self.init_pe()
+
+        self.init_weights()
+
+    def init_pe(self):
         positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
-        i = torch.arange(d_model, dtype=torch.float32) // 2 #(d_model)
-        denominator = 10000 ** (2 * i / d_model) # (d_model)            
-        
+        i = torch.arange(self.config["d_model"], dtype=torch.float32) // 2 #(d_model)
+        denominator = 10000 ** (2 * i / self.config["d_model"]) # (d_model)            
+
         pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
         pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
         pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
 
         self.register_buffer('pe', pe)
-
-        self.init_weights()
 
     def init_weights(self):
         # self.modules() is a method in PyTorch, typically used within a torch.nn.Module subclass, to return an iterator over all modules (layers) in a network, including the network itself and its submodules.

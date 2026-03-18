@@ -108,3 +108,6 @@ def evaluate(model, dataloader, device, char_lengths):
     bpc = compute_bpc(total_loss_sum, total_chars)
 
     return avg_token_loss, bpc
+
+# LR scheduler
+# https://docs.pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.LRScheduler.html

@@ -32,6 +32,7 @@ import datetime
 # Vocab size
 
 DIM = True
+ADAM_W = False
 
 def init_worker(tokenizer_path):
     global _tokenizer
@@ -120,7 +121,11 @@ def main(args):
     model.to(device) # Move model to GPU
 
     # --- Optimizer and loss function ----
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    # TODO: Implement AdamW with weight decay and learning rate scheduling if needed
+    if ADAM_W:
+        pass
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
@@ -155,6 +160,8 @@ def main(args):
             loss = compute_loss(logits, labels)
 
             loss.backward() # Backprop — compute gradients for every weight
+
+            # TODO: gradient clipping if needed
 
             optimizer.step() # Update weights using gradients
 

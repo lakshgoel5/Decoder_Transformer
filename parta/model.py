@@ -33,6 +33,14 @@ STD_INIT_WEIGHTS = 0.02
 MEAN_INIT_EMBEDDING = 0.0
 STD_INIT_EMBEDDING = 0.02
 
+# PE
+ROPE = False
+ALIBI = False
+LEARNED_PE = False
+
+# Activation in FFN
+SWIGLU = False
+
 class TransformerBlock(nn.Module):
     def __init__(self, config: Dict[str, Any], layer_idx: int):
         super().__init__()
@@ -157,9 +165,13 @@ class TransformerBlock(nn.Module):
         
         up = self.W_up(x)
 
-        gelu = torch.nn.functional.gelu(up)
+        activation = None
+        if SWIGLU:
+            print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
+        else:
+            activation = torch.nn.functional.gelu(up)
 
-        down = self.W_down(gelu)
+        down = self.W_down(activation)
 
         return down
         
@@ -231,6 +243,17 @@ class LanguageModel(nn.Module):
         self.init_weights()
 
     def init_pe(self):
+
+        # TODO: Implement RoPE, ALiBi, Learned PE as well
+        if ROPE:
+            print("[INIT] Using RoPE Positional Encoding\n")
+
+        elif ALIBI:
+            print("[INIT] Using ALiBi Positional Encoding\n")
+
+        elif LEARNED_PE:
+            print("[INIT] Using Learned Positional Encoding\n")
+
         positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
         i = torch.arange(self.config["d_model"], dtype=torch.float32) // 2 #(d_model)
         denominator = 10000 ** (2 * i / self.config["d_model"]) # (d_model)            

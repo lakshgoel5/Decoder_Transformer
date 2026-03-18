@@ -20,7 +20,7 @@ from typing import Any, Dict, List
 # nn.Linear(in_features, out_features)
 # nn.Embedding(num_embeddings, embedding_dim)
 
-DIM = True
+DIM = False
 
 WEIGHT_TIEING = True
 

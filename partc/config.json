@@ -4,6 +4,6 @@
     "d_head": 32,
     "d_ff": 512,
     "n_layers": 8,
-    "vocab_size": 50000,
+    "vocab_size": 6000,
     "mode": "standard"
 }

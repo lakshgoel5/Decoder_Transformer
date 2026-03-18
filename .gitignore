@@ -213,3 +213,4 @@ compare*
 final_tokenizer/
 *.txt
 dataset*
+*store

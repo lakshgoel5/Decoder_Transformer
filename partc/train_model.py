@@ -20,6 +20,8 @@ import json
 from pathlib import Path
 from torch.utils.data import DataLoader
 import datetime
+import math
+from torch.optim.lr_scheduler import LambdaLR
 
 # Allowed
 # DataLoader, Adam, Cross entropy, Unicodedata, Regex
@@ -49,7 +51,7 @@ def encode_sentence(sentence):
 #     return tokenizer.encode(sentence)
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 10
+NUM_EPOCHS = 25
 LR = 0.0005
 
 def main(args):

@@ -33,8 +33,8 @@ from torch.optim.lr_scheduler import LambdaLR
 # Design choice
 # Vocab size
 
-DIM = True
-ADAM_W = False
+DIM = False
+ADAM_W = True
 FRACTION_WARMUP = 0.1
 
 COSINE_LR = True

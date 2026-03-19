@@ -66,7 +66,7 @@ NUM_EPOCHS = 25
 LR = 0.0005
 
 def set_globals(config):
-    global ADAM_W, FRACTION_WARMUP, GRAD_CLIP_NORM, COSINE_LR, LINEAR_LR, BATCH_SIZE, NUM_EPOCHS, LR
+    global ADAM_W, FRACTION_WARMUP, GRAD_CLIP_NORM, COSINE_LR, LINEAR_LR, BATCH_SIZE, NUM_EPOCHS, LR, ACCUMULATION_STEPS
     BATCH_SIZE = config.get("batch_size", 32)
     NUM_EPOCHS = config.get("num_epochs", 25)
     LR = config.get("learning_rate", 0.0005)
@@ -78,7 +78,7 @@ def set_globals(config):
 
     COSINE_LR = config.get("cosine_lr", True)
     LINEAR_LR = config.get("linear_lr", False)
-    ACCUMULATION_STEPS = config.get("accumulation_steps", 2)
+    ACCUMULATION_STEPS = config.get("accumulation_steps", 1)
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")

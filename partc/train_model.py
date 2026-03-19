@@ -5,7 +5,7 @@ from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function, collate_fn, TextDataset, compute_loss, compute_bpc  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_fn, TextDataset, compute_loss, compute_bpc, evaluate  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -138,6 +138,24 @@ def main(args):
             total=len(corpus),
             desc="Encoding"
         ))
+    
+    # --- Load validation corpus (for BPC / selection) ----
+    print(f"Loading validation corpus from {args.valid_path}...")
+    valid_corpus = []
+    valid_char_lengths = []
+    with open(args.valid_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            text = line.strip()
+            valid_corpus.append(text)
+            valid_char_lengths.append(len(text))
+
+    print("Encoding validation corpus in parallel...")
+    with Pool(processes=num_processes, initializer=init_worker, initargs=(args.tokenizer_path,)) as pool:
+        encoded_valid_corpus = list(tqdm(
+            pool.imap(encode_sentence, valid_corpus, chunksize=max(1, len(valid_corpus) // (num_processes * 4))),
+            total=len(valid_corpus),
+            desc="Encoding Valid"
+        ))
 
     # --- Initialize model ----
 
@@ -175,6 +193,13 @@ def main(args):
         num_workers=BACKGROUND_CPUS, # Uses background CPU cores to load data
         pin_memory=True, # Speeds up CPU-to-GPU memory transfer
         prefetch_factor=2 # Queues up batches in advance
+    )
+    
+    valid_dataset = TextDataset(encoded_valid_corpus)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_fn, 
+        num_workers=BACKGROUND_CPUS, 
+        pin_memory=True, 
+        prefetch_factor=2
     )
     # a dict with 3 keys: input_ids, attention_mask, labels
     # input ids, labels comes from __getitem__()
@@ -290,13 +315,29 @@ def main(args):
 
         train_bpc = compute_bpc(total_loss_sum, sum(train_char_lengths))
 
+        # --- Validation ---
+        val_loss, val_bpc = evaluate(model, valid_dataloader, device, valid_char_lengths)
+        
+        # --- Model Selection ---
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_checkpoint = {
+                "model_state_dict": model.state_dict(),
+                "config": config,
+                "epoch": epoch,
+                "val_loss": val_loss,
+                "val_bpc": val_bpc
+            }
+            print(f"New best model found at epoch {epoch} with val_loss: {val_loss:.4f}")
+
         elapsed_total = time.time() - training_start
         tokens_per_sec = total_tokens_processed / max(elapsed_total, 1e-8)
         eta_seconds = (NUM_EPOCHS - epoch) * (time.time() - st)
 
         print(
             f"Epoch {epoch}/{NUM_EPOCHS} | "
-            f"Loss: {avg_loss:.4f} | PPL: {ppl:.2f} | "
+            f"Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f} | "
+            f"PPL: {ppl:.2f} | Val BPC: {val_bpc:.4f} | "
             f"Train BPC: {train_bpc:.4f} | "
             f"Epoch time: {time.time()-st:.1f}s | "
             f"Total elapsed: {str(datetime.timedelta(seconds=int(elapsed_total)))} | "
@@ -308,14 +349,13 @@ def main(args):
             "avg_epoch_loss": avg_loss,
             "avg_z_loss": total_z_loss / len(train_dataloader),
             "perplexity": ppl,
-            "train_bpc": train_bpc
+            "train_bpc": train_bpc,
+            "val_loss": val_loss,
+            "val_bpc": val_bpc
         })
 
     wandb.finish()
             
-    # --- Run validation and model selection ---
-    # Last day
-
     # --- Save best performing model ----
     checkpoint_path = os.path.join(args.output_model_path, "best_model.pt")
     if best_checkpoint is None:

@@ -168,7 +168,7 @@ class TransformerBlock(nn.Module):
 
         activation = None
         if SWIGLU:
-            print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
+            # print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
             gate = torch.nn.functional.silu(self.W_gate(x))
             activation = gate * up
         else:

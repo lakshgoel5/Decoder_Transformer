@@ -1,7 +1,7 @@
 # YOUR TOKENIZER AND MODEL from PART A AND PART B RESPECTIVELY
 # If you wish to change their code, please do so in their respective files under parta/ and partb/ directories.
 from partb.bpe_tokenizer import BPETokenizer
-from parta.model import LanguageModel
+from parta.model import LanguageModel, SWIGLU
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
@@ -22,6 +22,8 @@ from torch.utils.data import DataLoader
 import datetime
 import math
 from torch.optim.lr_scheduler import LambdaLR
+
+import wandb
 
 # Allowed
 # DataLoader, Adam, Cross entropy, Unicodedata, Regex
@@ -174,6 +176,16 @@ def main(args):
     training_start = time.time()
     total_tokens_processed = 0
 
+    best_val_loss = float('inf')
+    best_checkpoint = None
+
+    # --wandb----
+    wandb.init(
+        project="Hindi-LLM-V100",
+        name=f"run-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
+        config=config
+    )
+
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):
         model.train()
@@ -212,6 +224,12 @@ def main(args):
 
             total_tokens_processed += input_ids.numel()
 
+            wandb.log({
+                "batch_loss": loss.item(),
+                "learning_rate": scheduler.get_last_lr()[0],
+                "epoch": epoch
+            })
+
         avg_loss = total_loss / len(train_dataloader)
         ppl = torch.exp(torch.tensor(avg_loss)).item()
 
@@ -230,6 +248,14 @@ def main(args):
             f"ETA: {str(datetime.timedelta(seconds=int(eta_seconds)))} | "
             f"Tokens/sec: {tokens_per_sec:.0f}"
         )
+
+        wandb.log({
+            "avg_epoch_loss": avg_loss,
+            "perplexity": ppl,
+            "train_bpc": train_bpc
+        })
+
+    wandb.finish()
             
     # --- Run validation and model selection ---
     # Last day

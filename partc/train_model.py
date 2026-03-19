@@ -202,6 +202,8 @@ def main(args):
         config=config
     )
 
+    ACCUMULATION_STEPS = 4
+
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):
         model.train()
@@ -211,23 +213,26 @@ def main(args):
 
         st = time.time()
 
-        for batch in tqdm(train_dataloader, desc=f"Epoch {epoch}/{NUM_EPOCHS}"):
+        optimizer.zero_grad()
+
+        for i, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch}/{NUM_EPOCHS}")):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
             
-            optimizer.zero_grad()
-
             logits = model(input_ids, attention_mask)
             loss = compute_loss(logits, labels)
+            scaled_loss = loss / ACCUMULATION_STEPS
 
-            loss.backward() # Backprop — compute gradients for every weight
+            scaled_loss.backward() # Backprop — compute gradients for every weight
 
             # Gradient Clipping # DEBUG Parameter
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
 
-            optimizer.step() # Update weights using gradients
-            scheduler.step()
+            if (i + 1) % ACCUMULATION_STEPS == 0 or (i + 1) == len(train_dataloader):
+                optimizer.step() # Update weights using gradients
+                scheduler.step()
+                optimizer.zero_grad()
 
             total_loss += loss.item()
 

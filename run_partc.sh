@@ -18,6 +18,8 @@ if [ "$#" -ne 1 ]; then
     exit 1
 fi
 
+export WANDB_API_KEY=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
+
 # Check which argument was provided and run the corresponding script
 if [ "$1" == "--train-tokenizer" ]; then
     echo "Using the pretrained tokenizer provided in ./partb/final_tokenizer/ for model training."

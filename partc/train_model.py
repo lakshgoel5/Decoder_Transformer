@@ -44,6 +44,9 @@ GRAD_CLIP_NORM = 1.0
 COSINE_LR = True
 LINEAR_LR = False
 
+ACCUMULATION_STEPS = 4
+BACKGROUND_CPUS = 1
+
 def init_worker(tokenizer_path):
     global _tokenizer
     _tokenizer = BPETokenizer()
@@ -75,12 +78,17 @@ def set_globals(config):
 
     COSINE_LR = config.get("cosine_lr", True)
     LINEAR_LR = config.get("linear_lr", False)
+    ACCUMULATION_STEPS = config.get("accumulation_steps", 2)
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
 
     # Determine number of processes to use
     num_processes = cpu_count()
+    if num_processes >=2:
+        BACKGROUND_CPUS = 2
+    else:
+        BACKGROUND_CPUS = 1
 
     # GPUs
     if torch.cuda.is_available():
@@ -156,14 +164,18 @@ def main(args):
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn, 
+        num_workers=BACKGROUND_CPUS, # Uses background CPU cores to load data
+        pin_memory=True, # Speeds up CPU-to-GPU memory transfer
+        prefetch_factor=2 # Queues up batches in advance
+    )
     # a dict with 3 keys: input_ids, attention_mask, labels
     # input ids, labels comes from __getitem__()
     # attention mask comes from collate fn()
 
     # In validation, shuffle = False
 
-    total_steps = NUM_EPOCHS * len(train_dataloader)
+    total_steps = NUM_EPOCHS * (len(train_dataloader) // ACCUMULATION_STEPS)
     warmup_steps = int(FRACTION_WARMUP * total_steps) # FRACTION_WARMUP of training steps for warmup
 
     def lr_lambda(current_step):
@@ -201,8 +213,6 @@ def main(args):
         name=f"run-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
         config=config
     )
-
-    ACCUMULATION_STEPS = 4
 
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):

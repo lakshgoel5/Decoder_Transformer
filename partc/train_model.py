@@ -1,11 +1,11 @@
 # YOUR TOKENIZER AND MODEL from PART A AND PART B RESPECTIVELY
 # If you wish to change their code, please do so in their respective files under parta/ and partb/ directories.
 from partb.bpe_tokenizer import BPETokenizer
-from parta.model import LanguageModel, SWIGLU
+from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function, collate_fn, TextDataset, compute_loss, evaluate, compute_bpc  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_fn, TextDataset, compute_loss, compute_bpc  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -62,6 +62,20 @@ BATCH_SIZE = 32
 NUM_EPOCHS = 25
 LR = 0.0005
 
+def set_globals(config):
+    global ADAM_W, FRACTION_WARMUP, GRAD_CLIP_NORM, COSINE_LR, LINEAR_LR, BATCH_SIZE, NUM_EPOCHS, LR
+    BATCH_SIZE = config.get("batch_size", 32)
+    NUM_EPOCHS = config.get("num_epochs", 25)
+    LR = config.get("learning_rate", 0.0005)
+    
+    ADAM_W = config.get("adam_w", True)
+    FRACTION_WARMUP = config.get("fraction_warmup", 0.1)
+
+    GRAD_CLIP_NORM = config.get("grad_clip_norm", 1.0)
+
+    COSINE_LR = config.get("cosine_lr", True)
+    LINEAR_LR = config.get("linear_lr", False)
+
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
 
@@ -112,10 +126,12 @@ def main(args):
 
     # --- Initialize model ----
 
-    path = Path("./partc/config.json")
+    path = Path(args.config_path)
     config = None
     with path.open("r", encoding="utf-8") as f:
         config = json.load(f)
+
+    set_globals(config)
 
     model = LanguageModel(config)
 
@@ -139,7 +155,15 @@ def main(args):
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    total_steps = NUM_EPOCHS * (len(encoded_corpus) // BATCH_SIZE)
+    train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
+    # a dict with 3 keys: input_ids, attention_mask, labels
+    # input ids, labels comes from __getitem__()
+    # attention mask comes from collate fn()
+
+    # In validation, shuffle = False
+
+    total_steps = NUM_EPOCHS * len(train_dataloader)
     warmup_steps = int(FRACTION_WARMUP * total_steps) # FRACTION_WARMUP of training steps for warmup
 
     def lr_lambda(current_step):
@@ -162,14 +186,6 @@ def main(args):
     # Tool to adjust Learning rate
     # new_lr = initial_lr * lr_lambda(epoch)
     scheduler = LambdaLR(optimizer, lr_lambda)
-
-    train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn)
-    # a dict with 3 keys: input_ids, attention_mask, labels
-    # input ids, labels comes from __getitem__()
-    # attention mask comes from collate fn()
-
-    # In validation, shuffle = False
 
 
     # ---stats---
@@ -281,6 +297,9 @@ if __name__ == '__main__':
     parser.add_argument('--valid_path', type=str, required=True, help='Path to the valid dataset')
     parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to the tokenizer')
     parser.add_argument('--output_model_path', type=str, default='checkpoints', help='Directory to save checkpoints')
+
+    ### TODO: Remove this at submission
+    parser.add_argument('--config_path', type=str, required=True, help='Path to the config file')
 
     args = parser.parse_args()
     main(args)

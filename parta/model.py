@@ -143,7 +143,9 @@ class TransformerBlock(nn.Module):
         S = S.masked_fill(pad_mask, float("-inf"))
 
         # Softmax
-        S = torch.softmax(S, dim=-1)
+
+        # TODO: DEBUG
+        S = torch.nan_to_num(torch.softmax(S, dim=-1), nan=0.0)
         # By applying softmax over dim=-1 or dim=3, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
 
         out = S @ v_all
@@ -205,6 +207,24 @@ class TransformerBlock(nn.Module):
         x = x + z2
 
         return x
+    
+def set_globals(config: Dict[str, Any]):
+    global WEIGHT_TIEING, XAVIER, NORMAL, MEAN_INIT_WEIGHTS, STD_INIT_WEIGHTS, MEAN_INIT_EMBEDDING, STD_INIT_EMBEDDING, ROPE, ALIBI, LEARNED_PE, SWIGLU
+
+    WEIGHT_TIEING = config.get("weight_tieing", True)
+
+    XAVIER = config.get("xavier_init", True)
+    NORMAL = config.get("normal_init", False)
+    MEAN_INIT_WEIGHTS = config.get("mean_init_weights", 0.0)
+    STD_INIT_WEIGHTS = config.get("std_init_weights", 0.02)
+    MEAN_INIT_EMBEDDING = config.get("mean_init_embedding", 0.0)
+    STD_INIT_EMBEDDING = config.get("std_init_embedding", 0.02)
+
+    ROPE = config.get("rope_pe", False)
+    ALIBI = config.get("alibi_pe", False)
+    LEARNED_PE = config.get("learned_pe", False)
+
+    SWIGLU = config.get("swiglu_activation", True)
         
 
 class LanguageModel(nn.Module):
@@ -219,6 +239,8 @@ class LanguageModel(nn.Module):
         """
         super().__init__()
         self.config = config
+
+        set_globals(config)
         self.max_len = 2048
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):

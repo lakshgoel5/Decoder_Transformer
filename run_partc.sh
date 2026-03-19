@@ -34,7 +34,7 @@ elif [ "$1" == "--train-model" ]; then
     python -m partc.train_model --train_path ./data/hindi_mid_corpus.txt \
         --valid_path ./data/valid_mid_corpus.txt \
         --tokenizer_path ./partb/final_tokenizer/ \
-        --output_model_path ./partc/final_model/
+        --output_model_path ./partc/final_model/ --config_path ./partc/baseline.json
 
 else
     echo "Invalid argument. Use --train-tokenizer or --train-model."

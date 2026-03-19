@@ -29,5 +29,5 @@
     "alibi_pe": false,
     "learned_pe": false,
 
-    "swiglu_activation": true
+    "swiglu_activation": false
 }

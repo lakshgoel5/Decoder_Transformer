@@ -11,7 +11,7 @@
 
     "batch_size": 16,
     "accumulation_steps": 2,
-    
+
     "num_epochs": 25,
     "learning_rate": 0.0005,
     "adam_w": false,
@@ -31,6 +31,9 @@
     "alibi_pe": false,
     "learned_pe": false,
 
-    "swiglu_activation": false
+    "swiglu_activation": false,
+
+    "z_loss": false,
+    "qk_norm": false
 
 }

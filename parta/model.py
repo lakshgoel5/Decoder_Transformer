@@ -71,6 +71,13 @@ class TransformerBlock(nn.Module):
         self.gamma_2 = nn.Parameter(torch.ones(d_model))
         self.beta_2  = nn.Parameter(torch.zeros(d_model))
 
+        self.q_ln = None
+        self.k_ln = None
+
+        if QK_NORM:
+            self.q_ln = nn.LayerNorm(config["d_head"])
+            self.k_ln = nn.LayerNorm(config["d_head"])
+
     def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
@@ -100,6 +107,10 @@ class TransformerBlock(nn.Module):
         q_all = q_all.transpose(1,2)
         k_all = k_all.transpose(1,2)
         v_all = v_all.transpose(1,2)
+
+        if QK_NORM:
+            q_all = self.q_ln(q_all)
+            k_all = self.k_ln(k_all)
 
         # Find alpha_i_j
         # (B, n_heads, L, d_head) @ (B, n_heads, d_head, L) -> (B, n_heads, L, L)

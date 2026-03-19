@@ -47,6 +47,10 @@ LINEAR_LR = False
 ACCUMULATION_STEPS = 4
 BACKGROUND_CPUS = 1
 
+Z_LOSS = False
+
+QK_NORM = False
+
 def init_worker(tokenizer_path):
     global _tokenizer
     _tokenizer = BPETokenizer()
@@ -79,6 +83,9 @@ def set_globals(config):
     COSINE_LR = config.get("cosine_lr", True)
     LINEAR_LR = config.get("linear_lr", False)
     ACCUMULATION_STEPS = config.get("accumulation_steps", 1)
+
+    Z_LOSS = config.get("z_loss", False)
+    QK_NORM = config.get("qk_norm", False)
 
 def main(args):
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
@@ -232,14 +239,27 @@ def main(args):
             
             logits = model(input_ids, attention_mask)
             loss = compute_loss(logits, labels)
-            scaled_loss = loss / ACCUMULATION_STEPS
+            combined_loss = loss
+
+            if Z_LOSS:
+                valid_mask = (labels != -100)
+                valid_logits = logits[valid_mask]
+                # log(Z) = logsumexp(logits)
+                log_z = torch.logsumexp(valid_logits, dim=-1)
+
+                # z_loss = 10^-4 * log^2(Z)
+                z_loss = (1e-4) * torch.mean(log_z ** 2)
+
+                combined_loss += z_loss
+
+            scaled_loss = combined_loss / ACCUMULATION_STEPS
 
             scaled_loss.backward() # Backprop — compute gradients for every weight
 
-            # Gradient Clipping # DEBUG Parameter
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
 
             if (i + 1) % ACCUMULATION_STEPS == 0 or (i + 1) == len(train_dataloader):
+                # Gradient Clipping # DEBUG Parameter
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
                 optimizer.step() # Update weights using gradients
                 scheduler.step()
                 optimizer.zero_grad()
@@ -257,6 +277,7 @@ def main(args):
 
             wandb.log({
                 "batch_loss": loss.item(),
+                "z_loss": z_loss.item(),
                 "learning_rate": scheduler.get_last_lr()[0],
                 "epoch": epoch
             })

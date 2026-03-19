@@ -31,6 +31,9 @@
     "alibi_pe": false,
     "learned_pe": false,
 
-    "swiglu_activation": true
+    "swiglu_activation": true,
+
+    "z_loss": true,
+    "qk_norm": true
 
 }

@@ -3,7 +3,7 @@
     "n_heads": 4,
     "d_head": 64,
     "d_ff": 512,
-    "n_layers": 8,
+    "n_layers": 4,
     "vocab_size": 10000,
     "mode": "tanh-clipped",
     "tau": 1.0,

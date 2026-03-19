@@ -70,7 +70,7 @@ NUM_EPOCHS = 25
 LR = 0.0005
 
 def set_globals(config):
-    global ADAM_W, FRACTION_WARMUP, GRAD_CLIP_NORM, COSINE_LR, LINEAR_LR, BATCH_SIZE, NUM_EPOCHS, LR, ACCUMULATION_STEPS
+    global ADAM_W, FRACTION_WARMUP, GRAD_CLIP_NORM, COSINE_LR, LINEAR_LR, BATCH_SIZE, NUM_EPOCHS, LR, ACCUMULATION_STEPS, Z_LOSS, QK_NORM
     BATCH_SIZE = config.get("batch_size", 32)
     NUM_EPOCHS = config.get("num_epochs", 25)
     LR = config.get("learning_rate", 0.0005)
@@ -226,6 +226,7 @@ def main(args):
         model.train()
         total_loss = 0.0
         total_loss_sum = 0.0
+        total_z_loss = 0.0
         total_tokens = 0
 
         st = time.time()
@@ -241,6 +242,7 @@ def main(args):
             loss = compute_loss(logits, labels)
             combined_loss = loss
 
+            z_loss = torch.tensor(0.0, device=device)
             if Z_LOSS:
                 valid_mask = (labels != -100)
                 valid_logits = logits[valid_mask]
@@ -265,6 +267,7 @@ def main(args):
                 optimizer.zero_grad()
 
             total_loss += loss.item()
+            total_z_loss += z_loss.item()
 
             with torch.no_grad():
                 # labels == -100 are ignored positions
@@ -303,6 +306,7 @@ def main(args):
 
         wandb.log({
             "avg_epoch_loss": avg_loss,
+            "avg_z_loss": total_z_loss / len(train_dataloader),
             "perplexity": ppl,
             "train_bpc": train_bpc
         })

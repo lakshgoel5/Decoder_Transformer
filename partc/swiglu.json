@@ -12,7 +12,7 @@
     "batch_size": 16,
     "accumulation_steps": 2,
 
-    "num_epochs": 25,
+    "num_epochs": 45,
     "learning_rate": 0.0005,
     "adam_w": true,
     "fraction_warmup": 0.1,

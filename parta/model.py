@@ -38,6 +38,8 @@ ROPE = False
 ALIBI = False
 LEARNED_PE = False
 
+ASSERT = True ## ------DEBUG-------Remove before submission
+
 # Activation in FFN
 SWIGLU = True
 
@@ -153,10 +155,17 @@ class TransformerBlock(nn.Module):
         S = S.masked_fill(causal_mask, float("-inf"))
         S = S.masked_fill(pad_mask, float("-inf"))
 
+
+        if ASSERT:
+            S_before_softmax = S
+            # Evaluates assertion on valid tokens (expanding attention_mask to prevent IndexError)
+            valid_mask = attention_mask.bool().unsqueeze(1).unsqueeze(2).expand_as(S_before_softmax)
+            assert not torch.isnan(S_before_softmax[valid_mask]).any()
+
         # Softmax
 
-        # TODO: DEBUG
         S = torch.nan_to_num(torch.softmax(S, dim=-1), nan=0.0)
+        S = self.dropout(S)
         # By applying softmax over dim=-1 or dim=3, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
 
         out = S @ v_all
@@ -206,6 +215,7 @@ class TransformerBlock(nn.Module):
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
         z1 = self.W_O(head_output)
+        z1 = self.dropout(z1)
 
         # Residual connection
         x = x + z1
@@ -213,6 +223,7 @@ class TransformerBlock(nn.Module):
         # Pre-Norm
         x_norm = layer_norm(x, self.beta_2, self.gamma_2)
         z2 = self.feed_forward(x_norm)
+        z2 = self.dropout(z2)
 
         # Residual connection
         x = x + z2
@@ -273,6 +284,8 @@ class LanguageModel(nn.Module):
         # nn.Embedding is optimized specifically for this — instead of doing a full matrix multiply one_hot @ W, it does a direct memory lookup which is much faster.
         # Each row is a token vector
         self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
+
+        self.dropout = nn.Dropout(config.get("dropout", 0.1))
 
         self.init_pe()
 
@@ -409,34 +422,6 @@ class LanguageModel(nn.Module):
             block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"]) # Done
             block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"]) # Done
 
-    def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
-        # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
-        # PE(pos, 2i + 1) = cos(pos / 10000 ^ {2i/d_model})
-        # input_ids -> (B, L)
-        # return -> (L, d_model)
-
-        # Optimized for GPU
-        B, L = input_ids.shape
-        d_model = self.config["d_model"]
-        device = input_ids.device
-
-        positions = torch.arange(L, device=device) #(L)
-        # positions range from 0 to L-1 (some are padded)
-        
-        i = torch.arange(d_model, device=device) // 2 #(d_model)
-        denominator = 10000 ** (2 * i / d_model) # (d_model)            
-        
-        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
-        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
-        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
-
-        if DIM:
-            print("[DIM][PE]positions", positions.shape)
-            print("[DIM][PE]denominator", denominator.shape)
-            print("[DIM][PE]pe", pe.shape)
-        
-        return pe
-
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Implement the forward pass of the model. The output should be a tensor of shape (T, |Vocab|).
@@ -456,6 +441,7 @@ class LanguageModel(nn.Module):
         B, L, _ = X.shape
         # Get Positional Encoding
         X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
+        X = self.dropout(X)
 
         if DIM:
             print("[DIM][FORWARD]X", X.shape)

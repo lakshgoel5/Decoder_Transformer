@@ -5,7 +5,7 @@ from parta.model import LanguageModel
 
 # You can also create additional files in this directory and import them here if needed.
 # For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function, collate_fn, TextDataset, compute_loss, compute_bpc, evaluate  # Replace with actual utility functions as needed
+from .utils import dummy_function, collate_function, TextDataset, compute_loss, compute_bpc, evaluate  # Replace with actual utility functions as needed
 
 # You can structure your code as you see fit as long as the CLI works as specified.
 # Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
@@ -189,14 +189,14 @@ def main(args):
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_fn, 
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_function, 
         num_workers=BACKGROUND_CPUS, # Uses background CPU cores to load data
         pin_memory=True, # Speeds up CPU-to-GPU memory transfer
         prefetch_factor=2 # Queues up batches in advance
     )
     
     valid_dataset = TextDataset(encoded_valid_corpus)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_fn, 
+    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_function, 
         num_workers=BACKGROUND_CPUS, 
         pin_memory=True, 
         prefetch_factor=2
@@ -211,7 +211,7 @@ def main(args):
     warmup_steps = int(FRACTION_WARMUP * total_steps) # FRACTION_WARMUP of training steps for warmup
 
     def lr_lambda(current_step):
-        lr = None
+        lr = 0.0
         if LINEAR_LR:
             if current_step < warmup_steps:
                 return float(current_step) / float(max(1, warmup_steps)) # Gradually increasing to 1
@@ -225,7 +225,7 @@ def main(args):
             # cos(0) = 1, cos(pi) = -1, so this will decay from 1 to 0 following a cosine curve
 
             lr = 0.5 * (1.0 + math.cos(math.pi * progress))
-        return lr
+        return max(lr, 0.05)
 
     # Tool to adjust Learning rate
     # new_lr = initial_lr * lr_lambda(epoch)
@@ -332,7 +332,6 @@ def main(args):
 
         elapsed_total = time.time() - training_start
         tokens_per_sec = total_tokens_processed / max(elapsed_total, 1e-8)
-        eta_seconds = (NUM_EPOCHS - epoch) * (time.time() - st)
 
         print(
             f"Epoch {epoch}/{NUM_EPOCHS} | "
@@ -341,7 +340,6 @@ def main(args):
             f"Train BPC: {train_bpc:.4f} | "
             f"Epoch time: {time.time()-st:.1f}s | "
             f"Total elapsed: {str(datetime.timedelta(seconds=int(elapsed_total)))} | "
-            f"ETA: {str(datetime.timedelta(seconds=int(eta_seconds)))} | "
             f"Tokens/sec: {tokens_per_sec:.0f}"
         )
 

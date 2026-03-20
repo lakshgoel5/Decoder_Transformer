@@ -4,8 +4,8 @@
 
 # You are free to choose default vocab size in the train_tokenizer.py script.
 
-python -m partb.train_tokenizer --input_corpus_path ./data/hindi_mid_corpus.txt \
-    --output_tokenizer_path ./partb/final_tokenizer/ --vocab_size 10000
+python -m partb.train_tokenizer --input_corpus_path ./data/train.txt \
+    --output_tokenizer_path ./partb/final_tokenizer/ --vocab_size 12000
 
-python -m partb.evaluate_tokenizer --input_corpus_path ./data/valid_mid_corpus.txt \
+python -m partb.evaluate_tokenizer --input_corpus_path ./data/valid.txt \
     --tokenizer_path ./partb/final_tokenizer/

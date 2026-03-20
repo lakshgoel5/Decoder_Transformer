@@ -85,8 +85,6 @@ class BPETokenizer:
             "।", "।।", ",", "!", "?", "-", "—", "(", ")", "\"", "'", ":", ";", "||", "| |", "|"
         ]
 
-        self.reserved_count = 10 # First 10 int's saved for reserved tokens
-
         for token in self.special_tokens:
             if token not in SPECIALS:
                 SPECIALS.append(token)
@@ -133,6 +131,9 @@ class BPETokenizer:
         # क् + ष → क्ष
         if a_core.endswith('\u094D'):
             return 8.0
+
+        # if a_core in self.PUNCTUATIONS or b_core in self.PUNCTUATIONS:
+        #     return 1
 
         # --- MILD DISCOURAGE: cross-word merges (SPACE boundary) ---
         # BPE might merge end-of-word with start-of-next

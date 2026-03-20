@@ -216,3 +216,4 @@ dataset*
 *store
 final_model/
 wandb/
+segment*

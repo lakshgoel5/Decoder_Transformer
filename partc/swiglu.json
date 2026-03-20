@@ -7,7 +7,7 @@
     "vocab_size": 10000,
     "mode": "tanh-clipped",
     "tau": 1.0,
-    "dropout": 0.1,
+    "dropout": 0.2,
 
     "batch_size": 16,
     "accumulation_steps": 2,
@@ -17,8 +17,8 @@
     "adam_w": true,
     "fraction_warmup": 0.1,
     "grad_clip_norm": 1.0,
-    "cosine_lr": true,
-    "linear_lr": false,
+    "cosine_lr": false,
+    "linear_lr": true,
 
     "weight_tieing": true,
     "xavier_init": true,

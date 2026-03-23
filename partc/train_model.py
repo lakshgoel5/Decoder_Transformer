@@ -23,7 +23,6 @@ import datetime
 import math
 from torch.optim.lr_scheduler import LambdaLR
 
-import wandb
 
 # Allowed
 # DataLoader, Adam, Cross entropy, Unicodedata, Regex
@@ -239,12 +238,6 @@ def main(args):
     best_val_bpc = float('inf')
     best_checkpoint = None
 
-    # --wandb----
-    wandb.init(
-        project="Hindi-LLM-V100",
-        name=f"run-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
-        config=config
-    )
 
     # --- Training loop ----
     for epoch in range(1, NUM_EPOCHS + 1):
@@ -303,12 +296,6 @@ def main(args):
 
             total_tokens_processed += input_ids.numel()
 
-            wandb.log({
-                "batch_loss": loss.item(),
-                "z_loss": z_loss.item(),
-                "learning_rate": scheduler.get_last_lr()[0],
-                "epoch": epoch
-            })
 
         avg_loss = total_loss / len(train_dataloader)
         ppl = torch.exp(torch.tensor(avg_loss)).item()
@@ -343,16 +330,7 @@ def main(args):
             f"Tokens/sec: {tokens_per_sec:.0f}"
         )
 
-        wandb.log({
-            "avg_epoch_loss": avg_loss,
-            "avg_z_loss": total_z_loss / len(train_dataloader),
-            "perplexity": ppl,
-            "train_bpc": train_bpc,
-            "val_loss": val_loss,
-            "val_bpc": val_bpc
-        })
 
-    wandb.finish()
             
     # --- Save best performing model ----
     checkpoint_path = os.path.join(args.output_model_path, "best_model.pt")

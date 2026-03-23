@@ -278,7 +278,7 @@ class LanguageModel(nn.Module):
         self.config = config
 
         set_globals(config)
-        self.max_len = 2048
+        self.max_len = 1024
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
             raise ValueError("d_model must be divisible by n_heads")

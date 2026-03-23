@@ -322,6 +322,10 @@ def main(args):
                 "val_bpc": val_bpc
             }
             print(f"New best model found at epoch {epoch} with val_bpc: {val_bpc:.4f}")
+            
+            checkpoint_path = os.path.join(args.output_model_path, "best_model.pt")
+            torch.save(best_checkpoint, checkpoint_path)
+            print(f"Best model checkpoint updated at {checkpoint_path}")
 
         elapsed_total = time.time() - training_start
         tokens_per_sec = total_tokens_processed / max(elapsed_total, 1e-8)

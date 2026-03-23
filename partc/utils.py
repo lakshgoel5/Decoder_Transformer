@@ -7,7 +7,7 @@ def dummy_function():
     pass
 
 class TextDataset(Dataset): # child class
-    def __init__(self, encoded_corpus, max_len=2048):
+    def __init__(self, encoded_corpus, max_len=1024):
         self.encoded_corpus = encoded_corpus
         self.samples = []
         for tokens in encoded_corpus:

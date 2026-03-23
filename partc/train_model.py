@@ -236,7 +236,7 @@ def main(args):
     training_start = time.time()
     total_tokens_processed = 0
 
-    best_val_loss = float('inf')
+    best_val_bpc = float('inf')
     best_checkpoint = None
 
     # --wandb----
@@ -318,9 +318,9 @@ def main(args):
         # --- Validation ---
         val_loss, val_bpc = evaluate(model, valid_dataloader, device, valid_char_lengths)
         
-        # --- Model Selection ---
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # --- Model Selection (based on BPC) ---
+        if val_bpc < best_val_bpc:
+            best_val_bpc = val_bpc
             best_checkpoint = {
                 "model_state_dict": model.state_dict(),
                 "config": config,
@@ -328,7 +328,7 @@ def main(args):
                 "val_loss": val_loss,
                 "val_bpc": val_bpc
             }
-            print(f"New best model found at epoch {epoch} with val_loss: {val_loss:.4f}")
+            print(f"New best model found at epoch {epoch} with val_bpc: {val_bpc:.4f}")
 
         elapsed_total = time.time() - training_start
         tokens_per_sec = total_tokens_processed / max(elapsed_total, 1e-8)

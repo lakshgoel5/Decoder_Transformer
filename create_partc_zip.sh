@@ -9,6 +9,10 @@ PARTC_CHECKPOINT_FILE="$PARTC_DIR/checkpoint.txt"
 FORMAT_CHECKER_FILE="model_format_checker.py"
 PARTC_JSON_FILE="$PARTC_DIR/optum.json"
 
+# Get latest git commit ID and write to partc/git_commit.txt
+git rev-parse HEAD > "$PARTC_GIT_FILE"
+echo "Latest commit ID $(cat $PARTC_GIT_FILE) written to $PARTC_GIT_FILE"
+
 if [ ! -f "$PARTA_DIR/model.py" ]; then
     echo "Error: $PARTA_DIR/model.py not found."
     exit 1

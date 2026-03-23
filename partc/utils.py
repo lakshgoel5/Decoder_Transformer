@@ -33,7 +33,7 @@ class TextDataset(Dataset): # child class
     def __len__(self):
         return len(self.samples)
 
-def collate_fn(batch):
+def collate_function(batch):
     PAD_ID = 0  # Assume 0 is the padding token ID
     # raise NotImplementedError("Implement collate_fn as described in assignment document")
 
@@ -60,14 +60,14 @@ def collate_fn(batch):
         "labels": padded_labels
     }
 
-def compute_loss(logits, labels):
+def compute_loss(logits, labels, smoothing=0.0):
     # cross_entropy expects 2D inputs for the data and 1D for the labels.
     # logits shape: (B, L, V)
     # labels shape: (B, L)
     # logits.view(-1, logits.size(-1)): (B*L, V)
     # labels.view(-1): (B*L,)
     # ignore_index=-100: ignore the padding tokens
-    return torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100)
+    return torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100, label_smoothing=smoothing)
 
 def compute_bpc(total_loss_sum: float, total_chars: int) -> float:
     if total_chars == 0:
@@ -81,7 +81,6 @@ def evaluate(model, dataloader, device, char_lengths):
 
     total_loss_sum = 0.0  # sum_i (L_i * T_i)
     total_tokens = 0
-    total_chars = 0
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
@@ -97,16 +96,13 @@ def evaluate(model, dataloader, device, char_lengths):
 
             total_loss_sum += loss.item() * valid_tokens
             total_tokens += valid_tokens
-
-            # map batch indices back to original sequence indices to accumulate character counts
-            for i in range(labels.size(0)):
-                seq_idx = batch_idx * dataloader.batch_size + i
-                if seq_idx < len(char_lengths):
-                    total_chars += char_lengths[seq_idx]
+    
+    total_chars = sum(char_lengths)
 
     avg_token_loss = total_loss_sum / max(total_tokens, 1)
     bpc = compute_bpc(total_loss_sum, total_chars)
 
+    model.train()
     return avg_token_loss, bpc
 
 # LR scheduler

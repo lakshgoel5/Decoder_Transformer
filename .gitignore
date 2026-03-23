@@ -215,3 +215,5 @@ final_tokenizer/
 dataset*
 *store
 final_model/
+wandb/
+segment*

@@ -23,7 +23,7 @@ import datetime
 
 DIM = False
 
-WEIGHT_TIEING = True
+WEIGHT_TIEING = False
 
 # Initialization
 XAVIER = True
@@ -38,8 +38,12 @@ ROPE = False
 ALIBI = False
 LEARNED_PE = False
 
+ASSERT = True ## ------DEBUG-------Remove before submission
+
 # Activation in FFN
-SWIGLU = False
+SWIGLU = True
+
+QK_NORM = False
 
 class TransformerBlock(nn.Module):
     def __init__(self, config: Dict[str, Any], layer_idx: int):
@@ -62,6 +66,7 @@ class TransformerBlock(nn.Module):
         # Feed forward
         self.W_up = nn.Linear(d_model, d_ff, bias=True)
         self.W_down = nn.Linear(d_ff, d_model, bias=True)
+        self.W_gate = nn.Linear(d_model, d_ff, bias=True) # For SwiGLU
 
         self.dropout = nn.Dropout(config.get("dropout", 0.1))
 
@@ -70,7 +75,14 @@ class TransformerBlock(nn.Module):
         self.gamma_2 = nn.Parameter(torch.ones(d_model))
         self.beta_2  = nn.Parameter(torch.zeros(d_model))
 
-    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        self.q_ln = None
+        self.k_ln = None
+
+        if QK_NORM:
+            self.q_ln = nn.LayerNorm(config["d_head"])
+            self.k_ln = nn.LayerNorm(config["d_head"])
+
+    def multihead(self, x: torch.Tensor, attention_mask: torch.Tensor, rope_cos=None, rope_sin=None) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
         # return -> (B, L, d_model)
@@ -99,6 +111,21 @@ class TransformerBlock(nn.Module):
         q_all = q_all.transpose(1,2)
         k_all = k_all.transpose(1,2)
         v_all = v_all.transpose(1,2)
+
+        if QK_NORM:
+            q_all = self.q_ln(q_all)
+            k_all = self.k_ln(k_all)
+
+        if rope_cos is not None and rope_sin is not None:
+            rcos = rope_cos[:L, :].unsqueeze(0).unsqueeze(1) # (1, 1, L, d_head)
+            rsin = rope_sin[:L, :].unsqueeze(0).unsqueeze(1) # (1, 1, L, d_head)
+            
+            d2 = q_all.shape[-1] // 2
+            q_rot = torch.cat([-q_all[..., d2:], q_all[..., :d2]], dim=-1)
+            k_rot = torch.cat([-k_all[..., d2:], k_all[..., :d2]], dim=-1)
+            
+            q_all = q_all * rcos + q_rot * rsin
+            k_all = k_all * rcos + k_rot * rsin
 
         # Find alpha_i_j
         # (B, n_heads, L, d_head) @ (B, n_heads, d_head, L) -> (B, n_heads, L, L)
@@ -141,8 +168,17 @@ class TransformerBlock(nn.Module):
         S = S.masked_fill(causal_mask, float("-inf"))
         S = S.masked_fill(pad_mask, float("-inf"))
 
+
+        if ASSERT:
+            S_before_softmax = S
+            # Evaluates assertion on valid tokens (expanding attention_mask to prevent IndexError)
+            valid_mask = attention_mask.bool().unsqueeze(1).unsqueeze(2).expand_as(S_before_softmax)
+            assert not torch.isnan(S_before_softmax[valid_mask]).any()
+
         # Softmax
-        S = torch.softmax(S, dim=-1)
+
+        S = torch.nan_to_num(torch.softmax(S, dim=-1), nan=0.0)
+        S = self.dropout(S)
         # By applying softmax over dim=-1 or dim=3, PyTorch locks in a specific batch and a specific row (a single Query), looks at all the columns in that row (all the Keys), and applies the softmax function to them.
 
         out = S @ v_all
@@ -167,7 +203,9 @@ class TransformerBlock(nn.Module):
 
         activation = None
         if SWIGLU:
-            print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
+            # print("[SWIGLU] Using SwiGLU activation in feed forward network\n")
+            gate = torch.nn.functional.silu(self.W_gate(x))
+            activation = gate * up
         else:
             activation = torch.nn.functional.gelu(up)
 
@@ -176,7 +214,7 @@ class TransformerBlock(nn.Module):
         return down
         
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor, rope_cos=None, rope_sin=None) -> torch.Tensor:
         # x -> (B, L, d_model)
         # attention_mask -> (B, L)
         # return -> (B, L, d_model)
@@ -186,10 +224,11 @@ class TransformerBlock(nn.Module):
 
         # (B, L, d_model) -> (B, L, n_heads * d_head)
         # d_model is n_heads * d_head!!! Creacked it!
-        head_output = self.multihead(x_norm, attention_mask)
+        head_output = self.multihead(x_norm, attention_mask, rope_cos, rope_sin)
 
         # This function joins a list or tuple of tensors into a single tensor. Unlike torch.stack, it does not add a new dimension; it expands an existing one.
         z1 = self.W_O(head_output)
+        z1 = self.dropout(z1)
 
         # Residual connection
         x = x + z1
@@ -197,11 +236,31 @@ class TransformerBlock(nn.Module):
         # Pre-Norm
         x_norm = layer_norm(x, self.beta_2, self.gamma_2)
         z2 = self.feed_forward(x_norm)
+        z2 = self.dropout(z2)
 
         # Residual connection
         x = x + z2
 
         return x
+    
+def set_globals(config: Dict[str, Any]):
+    global WEIGHT_TIEING, XAVIER, NORMAL, MEAN_INIT_WEIGHTS, STD_INIT_WEIGHTS, MEAN_INIT_EMBEDDING, STD_INIT_EMBEDDING, ROPE, ALIBI, LEARNED_PE, SWIGLU, QK_NORM
+
+    WEIGHT_TIEING = config.get("weight_tieing", True)
+
+    XAVIER = config.get("xavier_init", True)
+    NORMAL = config.get("normal_init", False)
+    MEAN_INIT_WEIGHTS = config.get("mean_init_weights", 0.0)
+    STD_INIT_WEIGHTS = config.get("std_init_weights", 0.02)
+    MEAN_INIT_EMBEDDING = config.get("mean_init_embedding", 0.0)
+    STD_INIT_EMBEDDING = config.get("std_init_embedding", 0.02)
+
+    ROPE = config.get("rope_pe", False)
+    ALIBI = config.get("alibi_pe", False)
+    LEARNED_PE = config.get("learned_pe", False)
+
+    SWIGLU = config.get("swiglu_activation", True)
+    QK_NORM = config.get("qk_norm", False)
         
 
 class LanguageModel(nn.Module):
@@ -216,6 +275,8 @@ class LanguageModel(nn.Module):
         """
         super().__init__()
         self.config = config
+
+        set_globals(config)
         self.max_len = 2048
 
         if (self.config["d_model"] % self.config["n_heads"] != 0):
@@ -238,6 +299,8 @@ class LanguageModel(nn.Module):
         # Each row is a token vector
         self.token_embedding = nn.Embedding(config["vocab_size"], config["d_model"])
 
+        self.dropout = nn.Dropout(config.get("dropout", 0.1))
+
         self.init_pe()
 
         self.init_weights()
@@ -247,22 +310,31 @@ class LanguageModel(nn.Module):
         # TODO: Implement RoPE, ALiBi, Learned PE as well
         if ROPE:
             print("[INIT] Using RoPE Positional Encoding\n")
+            d_head = self.config["d_head"]
+            positions = torch.arange(self.max_len, dtype=torch.float32)
+            inv_freq = 1.0 / (10000 ** (torch.arange(0, d_head, 2).float() / d_head))
+            freqs = torch.outer(positions, inv_freq)
+            freqs = torch.cat((freqs, freqs), dim=-1) # (max_len, d_head)
+            self.register_buffer('rope_cos', freqs.cos())
+            self.register_buffer('rope_sin', freqs.sin())
 
         elif ALIBI:
             print("[INIT] Using ALiBi Positional Encoding\n")
 
         elif LEARNED_PE:
             print("[INIT] Using Learned Positional Encoding\n")
+            self.pe = nn.Embedding(self.max_len, self.config["d_model"])
 
-        positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
-        i = torch.arange(self.config["d_model"], dtype=torch.float32) // 2 #(d_model)
-        denominator = 10000 ** (2 * i / self.config["d_model"]) # (d_model)            
+        else:
+            positions = torch.arange(self.max_len, dtype=torch.float32) #(self.max_len)        
+            i = torch.arange(self.config["d_model"], dtype=torch.float32) // 2 #(d_model)
+            denominator = 10000 ** (2 * i / self.config["d_model"]) # (d_model)            
 
-        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
-        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
-        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
+            pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
+            pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
+            pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
 
-        self.register_buffer('pe', pe)
+            self.register_buffer('pe', pe)
 
     def init_weights(self):
         # self.modules() is a method in PyTorch, typically used within a torch.nn.Module subclass, to return an iterator over all modules (layers) in a network, including the network itself and its submodules.
@@ -373,34 +445,6 @@ class LanguageModel(nn.Module):
             block.gamma_1 = nn.Parameter(weights[f"gamma_{l}_1"]) # Done
             block.gamma_2 = nn.Parameter(weights[f"gamma_{l}_2"]) # Done
 
-    def positional_enc(self, input_ids: torch.Tensor) -> torch.Tensor:
-        # PE(pos, 2i) = sin(pos / 10000 ^ {2i/d_model})
-        # PE(pos, 2i + 1) = cos(pos / 10000 ^ {2i/d_model})
-        # input_ids -> (B, L)
-        # return -> (L, d_model)
-
-        # Optimized for GPU
-        B, L = input_ids.shape
-        d_model = self.config["d_model"]
-        device = input_ids.device
-
-        positions = torch.arange(L, device=device) #(L)
-        # positions range from 0 to L-1 (some are padded)
-        
-        i = torch.arange(d_model, device=device) // 2 #(d_model)
-        denominator = 10000 ** (2 * i / d_model) # (d_model)            
-        
-        pe = positions.unsqueeze(1) / denominator.unsqueeze(0) # (L, d_model)
-        pe[:, 0: :2] = torch.sin(pe[:, 0: :2])
-        pe[:, 1: :2] = torch.cos(pe[:, 1: :2])
-
-        if DIM:
-            print("[DIM][PE]positions", positions.shape)
-            print("[DIM][PE]denominator", denominator.shape)
-            print("[DIM][PE]pe", pe.shape)
-        
-        return pe
-
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Implement the forward pass of the model. The output should be a tensor of shape (T, |Vocab|).
@@ -419,14 +463,26 @@ class LanguageModel(nn.Module):
 
         B, L, _ = X.shape
         # Get Positional Encoding
-        X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
+        if getattr(self, "pe", None) is not None:
+            if isinstance(self.pe, nn.Embedding):
+                positions = torch.arange(L, device=X.device)
+                X = X + self.pe(positions).unsqueeze(0)
+            else:
+                X = X + self.pe[:L, :].to(X.device).unsqueeze(0) # (B, L, d_model)
+        X = self.dropout(X)
 
         if DIM:
             print("[DIM][FORWARD]X", X.shape)
         
+        rope_cos = getattr(self, "rope_cos", None)
+        rope_sin = getattr(self, "rope_sin", None)
+        if rope_cos is not None:
+            rope_cos = rope_cos.to(X.device)
+            rope_sin = rope_sin.to(X.device)
+
         # Transformer Blocks
         for block in self.blocks:
-            X = block(X, attention_mask)
+            X = block(X, attention_mask, rope_cos=rope_cos, rope_sin=rope_sin)
 
         if DIM:
             print("[DIM][FORWARD]X", X.shape)

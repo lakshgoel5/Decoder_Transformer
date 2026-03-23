@@ -29,13 +29,15 @@ MATRAS = set('\u093C\u093E\u093F\u0940\u0941\u0942\u0943\u0944'
              '\u094E\u094F\u0902\u0903\u0901')
 HALANT = '\u094D'
 
+MULTI_WORD = ["के लिए", "की तरह", "के बाद", "के पास"]
+
 class BPETokenizer:
     def __init__(self, vocab_size=10000, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
         self.char_to_int = {}
         self.int_to_char = {}
 
-        self.min_freq = 2
+        self.min_freq = 3
 
         # Ordered
         self.merges = []
@@ -69,9 +71,12 @@ class BPETokenizer:
             "ों", "यों", # plural oblique
             
             # High frequency function words
-            "और", "या", "कि", "जो", "तो", "भी", "ही", "न", "नहीं",
-            "यह", "वह", "वे", "हम", "आप", "मैं", "तुम",
+            "और", "या", "कि", "जो", "तो", "भी", "ही", 
+            # "न", "नहीं",
+            # "यह", "वह", "वे", "हम", "आप", "मैं", "तुम",
         ]
+
+        self.DEVANAGARI_DIGITS = ['०','१','२','३','४','५','६','७','८','९']
 
         self.protected_tokens = set(self.HINDI_PROTECTED) # O(1) lookup
 
@@ -79,8 +84,6 @@ class BPETokenizer:
             # Punctuation
             "।", "।।", ",", "!", "?", "-", "—", "(", ")", "\"", "'", ":", ";", "||", "| |", "|"
         ]
-
-        self.reserved_count = 10 # First 10 int's saved for reserved tokens
 
         for token in self.special_tokens:
             if token not in SPECIALS:
@@ -97,7 +100,47 @@ class BPETokenizer:
         for token in self.PUNCTUATIONS:
             self.add_token(token)
 
+        for digit in self.DEVANAGARI_DIGITS:
+            self.add_token(digit)
+
         self.iters = 100
+
+    def get_pair_weight(self, a: str, b: str) -> float:
+        a_core = a.lstrip(SPACE)  # strip space prefix for checking
+        b_core = b.lstrip(SPACE)
+
+        # Never merge anything into a vibhakti from the right
+        if b_core in self.protected_tokens and a_core != "":
+            return 0.5
+
+        # Never merge a vibhakti with what follows on the right
+        if a_core in self.protected_tokens:
+            return 0.5
+
+        # --- BOOST: nukta bonds with its consonant ---
+        # ड + ़ → ड़
+        # NOTE: Nukta (\u093C) is present in MATRAS. This must be checked before MATRAS.
+        if b_core == '\u093C':
+            return 30.0
+
+        # BOOST: matra must bond tightly with preceding consonant
+        if b_core and all(c in MATRAS for c in b_core):
+            return 5.0
+
+        # --- BOOST: halant conjuncts stay together ---
+        # क् + ष → क्ष
+        if a_core.endswith('\u094D'):
+            return 8.0
+
+        # if a_core in self.PUNCTUATIONS or b_core in self.PUNCTUATIONS:
+        #     return 1
+
+        # --- MILD DISCOURAGE: cross-word merges (SPACE boundary) ---
+        # BPE might merge end-of-word with start-of-next
+        # if SPACE in b and b != SPACE:
+        #     return 0.3
+
+        return 1.0  # default
 
     def normalize_hindi(self, text):
         for punc in self.PUNCTUATIONS:
@@ -133,7 +176,8 @@ class BPETokenizer:
                 p = (word_tuple[j], word_tuple[j+1])
                 if p in pair_to_words and i in pair_to_words[p]:
                     pair_to_words[p].remove(i)
-                pair_counts[p] -= word_frequency
+                weight = self.get_pair_weight(word_tuple[j], word_tuple[j+1])
+                pair_counts[p] -= word_frequency * weight
                 if pair_counts[p] <= 0 and p in pair_counts:
                     del pair_counts[p]
 
@@ -153,7 +197,8 @@ class BPETokenizer:
 
             for j in range(len(new_word_tuple) - 1):
                 p = (new_word_tuple[j], new_word_tuple[j+1])
-                pair_counts[p] += word_frequency
+                weight = self.get_pair_weight(new_word_tuple[j], new_word_tuple[j+1])
+                pair_counts[p] += word_frequency * weight
                 pair_to_words[p].add(i)
 
     def apply_merge_order(self, chars):
@@ -181,7 +226,7 @@ class BPETokenizer:
             chars = new_chars_list
 
         return chars
-    
+  
     # Solving problems defiend above
     def word_to_unit(self, word):
         units = []
@@ -242,7 +287,7 @@ class BPETokenizer:
     def train(self, corpus):
         # raise NotImplementedError("Training method not implemented yet.")
 
-        corpus = [unicodedata.normalize('NFC', sentence) for sentence in corpus]
+        # corpus = [unicodedata.normalize('NFC', sentence) for sentence in corpus]
 
         # ----- Pair frequency counting ------
         word_freq = defaultdict(int)
@@ -280,7 +325,8 @@ class BPETokenizer:
         for i, word in enumerate(word_list):
             for j in range(len(word) - 1):
                 pair = (word[j], word[j+1])
-                pair_counts[pair] += word_counts[i]
+                weight = self.get_pair_weight(word[j], word[j+1])
+                pair_counts[pair] += word_counts[i] * weight
                 pair_to_words[pair].add(i)
 
 
@@ -329,7 +375,7 @@ class BPETokenizer:
         if not text:
             return []
         
-        text = unicodedata.normalize('NFC', text)
+        # text = unicodedata.normalize('NFC', text)
             
         words = text.split(" ")
         token_ids = []
@@ -343,11 +389,15 @@ class BPETokenizer:
                 prefix = "" if word_idx == 0 else SPACE
                 # unit = self.word_to_unit(prefix + word)
                 unit = prefix + word
-                for c in unit:
-                    if c in self.char_to_int:
-                        chars.append(c)
+                for token in unit:
+                    if token in self.char_to_int:
+                        chars.append(token)
                     else:
-                        chars.append(self.UNK_token)
+                        for c in token:
+                            if c in self.char_to_int:
+                                chars.append(c)
+                            else:
+                                chars.append(self.UNK_token)
             
 
             # Why save it, encode it here itself

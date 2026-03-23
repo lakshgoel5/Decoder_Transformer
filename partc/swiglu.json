@@ -1,0 +1,39 @@
+{
+    "d_model": 256,
+    "n_heads": 4,
+    "d_head": 64,
+    "d_ff": 512,
+    "n_layers": 8,
+    "vocab_size": 10000,
+    "mode": "tanh-clipped",
+    "tau": 1.0,
+    "dropout": 0.2,
+
+    "batch_size": 16,
+    "accumulation_steps": 2,
+
+    "num_epochs": 45,
+    "learning_rate": 0.0005,
+    "adam_w": true,
+    "fraction_warmup": 0.1,
+    "grad_clip_norm": 1.0,
+    "cosine_lr": false,
+    "linear_lr": true,
+
+    "weight_tieing": true,
+    "xavier_init": true,
+    "normal_init": false,
+    "mean_init_weights": 0.0,
+    "std_init_weights": 0.02,
+    "mean_init_embedding": 0.0,
+    "std_init_embedding": 0.02,
+    "rope_pe": false,
+    "alibi_pe": false,
+    "learned_pe": false,
+
+    "swiglu_activation": true,
+
+    "z_loss": true,
+    "qk_norm": true
+
+}

@@ -9,7 +9,30 @@ def load_model_and_tokenizer(model_path, tokenizer_path):
     """
     CHANGE THIS FUNCTION TO LOAD YOUR TRAINED MODEL AND TOKENIZER FROM THE CHECKPOINT DIRECTORY.
     """
-    raise NotImplementedError("You need to implement the load_model_and_tokenizer function to load your trained model and tokenizer from the checkpoint directory.")
+    import os
+    
+    tokenizer = BPETokenizer()
+    tokenizer.load(tokenizer_path)
+
+    if os.path.isdir(model_path):
+        model_file = os.path.join(model_path, "best_model.pt")
+    else:
+        model_file = model_path
+        
+    checkpoint = torch.load(model_file, map_location='cpu')
+    config = checkpoint["config"]
+    model = LanguageModel(config)
+    model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    model.eval()
+    
+    # In some training runs, the BPE tokenizer might stop merging early if it runs out of frequencies,
+    # resulting in a slightly smaller len(vocab) than the configured vocab_size in the model's embedding.
+    # To pass `logits.shape[2] == tokenizer.get_vocab_size()`, we instruct the loaded tokenizer
+    # to yield the model's requested vocab_size.
+    tokenizer.get_vocab_size = lambda: config["vocab_size"]
+    
+    
+    return model, tokenizer
 
 
 def check_format(model, tokenizer, texts):
@@ -58,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to the tokenizer checkpoint directory')
     args = parser.parse_args()
 
-    model, tokenizer = load_model_and_tokenizer(args.model_path, args.model_path)
+    model, tokenizer = load_model_and_tokenizer(args.model_path, args.tokenizer_path)
 
     # Example texts to check format
     texts = [

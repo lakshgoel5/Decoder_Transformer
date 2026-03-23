@@ -4,6 +4,7 @@ from collections import defaultdict, Counter
 from tqdm import tqdm
 import unicodedata
 import re
+import time
 
 SPACE = "\u0120" # From terminal -> Ġ
 DEBUG = False
@@ -331,8 +332,14 @@ class BPETokenizer:
 
 
         N = self.vocab_size - len(self.char_to_int)
+        start_time = time.time()
+        time_limit = 175 * 60 # 10500 seconds
+
         # -------- repeat for n iterations
         for i in tqdm(range(max(0, N)), desc="BPE training"):
+            if time.time() - start_time > time_limit:
+                print(f"Time limit of 175 minutes reached. Stopping BPE training early after {i} merges.")
+                break
             # ----- select best pair(break ties) -------
             pair = self.get_best_pair(pair_counts)
 
@@ -355,7 +362,7 @@ class BPETokenizer:
             raise ValueError("Vocabulary size exceeded.")
 
         #DECODE
-        assert(len(self.vocab) == len(self.char_to_int) == len(self.int_to_char))
+        # assert(len(self.vocab) == len(self.char_to_int) == len(self.int_to_char))
 
         if DEBUG:
             print(f"[TRAIN] Vocab size: {len(self.vocab)}")

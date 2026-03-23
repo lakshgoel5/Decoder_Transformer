@@ -240,7 +240,13 @@ def main(args):
 
 
     # --- Training loop ----
+    max_training_time = 5.8 * 3600 
+
     for epoch in range(1, NUM_EPOCHS + 1):
+        if time.time() - training_start > max_training_time:
+            print(f"Safety timeout (5.8h) reached at epoch {epoch}. Stopping training to save best checkpoint.")
+            break
+
         model.train()
         total_loss = 0.0
         total_loss_sum = 0.0

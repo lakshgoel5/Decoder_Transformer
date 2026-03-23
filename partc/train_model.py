@@ -21,7 +21,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 import datetime
 import math
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
 
 
 # Allowed
@@ -181,7 +181,7 @@ def main(args):
     # --- Optimizer and loss function ----
     if ADAM_W:
         print("[OPTIMIZER] Using AdamW with Weight Decay")
-        optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1, betas=(0.9, 0.95))
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1)
         # First beta: This tracks the average of past gradients. A value of 0.9 means the optimizer relies heavily on the direction it was already going, helping it barrel through noisy batches.
         # Second beta: This tracks the average of past squared gradients to scale the learning rate for each specific weight.
     else:
@@ -228,7 +228,7 @@ def main(args):
 
     # Tool to adjust Learning rate
     # new_lr = initial_lr * lr_lambda(epoch)
-    scheduler = LambdaLR(optimizer, lr_lambda)
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
 
 
     # ---stats---

@@ -188,19 +188,15 @@ def main(args):
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    # No collate function or padding required! All uniform length.
-    eos_id = tokenizer.char_to_int.get("<|EOS|>", None)
-    context_length = config.get("max_len", 128)
-
-    train_dataset = TextDataset(encoded_corpus, max_len=context_length, eos_token_id=eos_id) # DEBUG Max Len
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, 
+    train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_function, 
         num_workers=BACKGROUND_CPUS, # Uses background CPU cores to load data
         pin_memory=True, # Speeds up CPU-to-GPU memory transfer
         prefetch_factor=2 # Queues up batches in advance
     )
     
-    valid_dataset = TextDataset(encoded_valid_corpus, max_len=context_length, eos_token_id=eos_id)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, 
+    valid_dataset = TextDataset(encoded_valid_corpus)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_function, 
         num_workers=BACKGROUND_CPUS, 
         pin_memory=True, 
         prefetch_factor=2

@@ -7,33 +7,17 @@ def dummy_function():
     pass
 
 class TextDataset(Dataset): # child class
-    def __init__(self, encoded_corpus, max_len=2048, eos_token_id=None):
+    def __init__(self, encoded_corpus, max_len=2048):
         self.encoded_corpus = encoded_corpus
         self.samples = []
-        if eos_token_id is not None:
-            # Build continuous stream with EOS separators
-            stream = []
-            for tokens in encoded_corpus:
-                if len(tokens) == 0: continue
-                stream.extend(tokens)
-                stream.append(eos_token_id)
-            
-            # Chunk strict uniform length blocks
-            for i in range(0, len(stream) - max_len, max_len):
-                chunk = stream[i : i + max_len + 1]  # +1 for label shift
-                if len(chunk) == max_len + 1:
+        for tokens in encoded_corpus:
+            if len(tokens) < 2:
+                continue
+            # Chunk into max_len blocks
+            for i in range(0, len(tokens) - 1, max_len):
+                chunk = tokens[i : i + max_len + 1]  # +1 for the label shift
+                if len(chunk) >= 2:
                     self.samples.append(chunk)
-
-        else:
-            # Fallback sentence-by-sentence behavior
-            for tokens in encoded_corpus:
-                if len(tokens) < 2:
-                    continue
-                # Chunk into max_len blocks
-                for i in range(0, len(tokens) - 1, max_len):
-                    chunk = tokens[i : i + max_len + 1]  # +1 for the label shift
-                    if len(chunk) >= 2:
-                        self.samples.append(chunk)
         
     def __getitem__(self, idx):
         tokens = self.samples[idx]

@@ -159,7 +159,7 @@ def main(args):
 
     # --- Initialize model ----
 
-    path = Path(args.config_path)
+    path = Path("partc/optum.json")
     config = None
     with path.open("r", encoding="utf-8") as f:
         config = json.load(f)
@@ -375,9 +375,6 @@ if __name__ == '__main__':
     parser.add_argument('--valid_path', type=str, required=True, help='Path to the valid dataset')
     parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to the tokenizer')
     parser.add_argument('--output_model_path', type=str, default='checkpoints', help='Directory to save checkpoints')
-
-    ### TODO: Remove this at submission
-    parser.add_argument('--config_path', type=str, required=True, help='Path to the config file')
 
     args = parser.parse_args()
     main(args)

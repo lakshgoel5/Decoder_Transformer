@@ -32,7 +32,7 @@ HALANT = '\u094D'
 MULTI_WORD = ["के लिए", "की तरह", "के बाद", "के पास"]
 
 class BPETokenizer:
-    def __init__(self, vocab_size=12000, special_tokens=None):
+    def __init__(self, vocab_size=10000, special_tokens=None):
         # raise NotImplementedError("BPETokenizer initialization not implemented yet.")
         self.char_to_int = {}
         self.int_to_char = {}

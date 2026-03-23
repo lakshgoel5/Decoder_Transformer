@@ -20,7 +20,7 @@
     "cosine_lr": true,
     "linear_lr": false,
 
-    "weight_tieing": true,
+    "weight_tieing": false,
     "xavier_init": true,
     "normal_init": false,
     "mean_init_weights": 0.0,

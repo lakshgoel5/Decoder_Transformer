@@ -188,18 +188,10 @@ def main(args):
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     train_dataset = TextDataset(encoded_corpus) # DEBUG Max Len
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_function, 
-        num_workers=BACKGROUND_CPUS, # Uses background CPU cores to load data
-        pin_memory=True, # Speeds up CPU-to-GPU memory transfer
-        prefetch_factor=2 # Queues up batches in advance
-    )
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  collate_fn=collate_function)
     
     valid_dataset = TextDataset(encoded_valid_corpus)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_function, 
-        num_workers=BACKGROUND_CPUS, 
-        pin_memory=True, 
-        prefetch_factor=2
-    )
+    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False,  collate_fn=collate_function)
     # a dict with 3 keys: input_ids, attention_mask, labels
     # input ids, labels comes from __getitem__()
     # attention mask comes from collate fn()

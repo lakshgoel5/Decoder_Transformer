@@ -1,101 +1,200 @@
-# COL772-HindiLLM: Assignment on Building a Hindi Language Model
+# Hindi Language Model — BPE Tokenizer + Decoder-Only Transformer
 
-Welcome, students, to the COL772 HindiLLM assignment repository! This assignment is designed to guide you through the process of building and training components of a Large Language Model (LLM) specifically for the Hindi language. You will be working on different stages, from data preparation and tokenization to model training.
+A from-scratch implementation of a Hindi language model built in three parts: a **Transformer decoder** (Part A), a **Hindi-aware BPE tokenizer** (Part B), and an end-to-end **training pipeline** with hyperparameter tuning (Part C).
 
-## Table of Contents
-1.  [Project Structure](#project-structure)
-2.  [Setup Instructions](#setup-instructions)
-3.  [Running the Assignment Parts](#running-the-assignment-parts)
-    *   [Part A: Initial Model](#part-a-data-preparation-and-initial-model)
-    *   [Part B: BPE Tokenizer Implementation](#part-b-bpe-tokenizer-implementation)
-    *   [Part C: Training the Language Model](#part-c-training-the-language-model)
-4.  [Important Notes](#important-notes)
+---
 
-## Project Structure
+## Overview
 
-This repository is organized into several directories, each corresponding to a specific part of the assignment or containing shared resources.
+| Part | What I built |
+|------|-------------|
+| **Part A** | Decoder-only Transformer with multi-head attention, SwiGLU FFN, RoPE/ALiBi/sinusoidal PE, and a custom `collate_fn` |
+| **Part B** | BPE tokenizer from scratch with Hindi-specific matra bonding, vibhakti protection, and weighted pair scoring |
+| **Part C** | Full training loop with AdamW, cosine LR scheduler with warmup, gradient accumulation, and BPC-based model selection |
+
+---
+
+## Part A — Transformer Language Model (`parta/model.py`)
+
+### Architecture
+
+A standard **decoder-only Transformer** with pre-norm residual connections, implemented entirely in PyTorch without any `nn.Transformer` shortcuts.
+
+**Multi-Head Self-Attention:**
+- All Q, K, V projections fused into single linear layers (`W_Q_all`, `W_K_all`, `W_V_all`) for efficiency.
+- Causal masking + padding mask applied jointly before softmax.
+- `nan_to_num` on softmax output to handle all-masked rows gracefully.
+
+**Feed-Forward Network:**
+- **SwiGLU activation** (default): `SiLU(W_gate(x)) * W_up(x)` — the same gating mechanism used in LLaMA/Mistral.
+- Fallback to **GeLU** when SwiGLU is disabled.
+
+**Positional Encoding (configurable):**
+- Sinusoidal PE (default)
+- **RoPE** — Rotary position embeddings applied directly to Q and K before attention
+- ALiBi (stub)
+- Learned PE
+
+**Other design choices:**
+- **Weight tying** between token embedding (`W_vocab`) and the output projection (`W_devocab`)
+- **Xavier initialization** for linear layers; normal init for embeddings
+- **QK-Norm** (optional) — LayerNorm applied to Q and K before attention scores
+- `tanh-clipped` attention mode: scales attention scores by `τ * tanh(S)` to prevent attention entropy collapse
+
+### `collate_fn`
+
+Pads variable-length sequences to the batch maximum using `pad_sequence` and returns `input_ids`, `attention_mask`.
+
+---
+
+## Part B — Hindi BPE Tokenizer (`partb/bpe_tokenizer.py`)
+
+### Why a custom tokenizer for Hindi?
+
+Standard BPE treats every character equally, which causes two critical problems for Devanagari:
+
+1. **Matra splitting**: `का` → `क` + `ा` — the vowel diacritic `ा` has no independent pronunciation.
+2. **Nukta separation**: `ड़` → `ड` + `़` — nukta is a diacritic that modifies the consonant.
+
+### What I implemented
+
+**Linguistically-aware initial segmentation (`word_to_unit`):**
+- Consonant + all following matras/halant-conjuncts are treated as a single atomic unit before BPE merging begins.
+- Halant (`्`) glues the preceding consonant to the next one, forming conjuncts (`क्ष`, `त्र`).
+
+**Weighted pair scoring (`get_pair_weight`):**
+- Nukta bonds: weight **30×** (must not be split from consonant)
+- Matra bonds: weight **5×** (strong bond with preceding consonant)
+- Halant conjuncts: weight **8×**
+- Vibhakti (postpositions: `ने`, `को`, `से`, `का`, `के`, `की`, `में`, ...) protected from merging: weight **0.5×**
+
+**Protected token pre-seeding:**
+- Hindi vibhaktis, common verb suffixes, plural oblique markers, and punctuation are added to the vocabulary before BPE training, guaranteeing they are never split.
+
+**Efficient training:**
+- Frequency-weighted pair counts with a `pair_to_words` index for O(1) affected-word lookups on merge.
+- Min-frequency pruning (`min_freq=3`) to avoid merging noise.
+- Time-limited training (175-minute wall clock guard for HPC environments).
+
+**Encode / Decode:**
+- `encode`: Applies learned merges in the recorded order using `apply_merge_order` (greedy left-to-right, earliest merge wins).
+- `decode`: Concatenates tokens and strips the `Ġ` space prefix.
+- `save` / `load`: Serializes full tokenizer state to JSON.
+
+---
+
+## Part C — Training Pipeline (`partc/train_model.py`)
+
+### Training Setup
+
+- **Optimizer**: AdamW with `weight_decay=0.1`
+- **LR Schedule**: Cosine annealing with linear warmup (15% of total steps); minimum LR floor of `1e-5`
+- **Gradient accumulation**: 4 steps (effective batch size = 64)
+- **Gradient clipping**: `max_norm=1.0`
+- **Parallelism**: Corpus encoding parallelized with `multiprocessing.Pool` using a persistent worker pool
+- **Early stopping**: Best checkpoint saved by validation BPC; 5.8-hour wall-clock guard for HPC
+
+### Model Selection
+
+Evaluated every epoch on a held-out validation set. Metric: **Bits Per Character (BPC)** = `NLL_loss / (total_chars * ln(2))`. Best BPC checkpoint is saved as `final_model/best_model.pt`.
+
+### Final Model Config (`optum.json`)
+
+| Hyperparameter | Value |
+|---------------|-------|
+| `d_model` | 384 |
+| `n_heads` | 8 |
+| `d_head` | 48 |
+| `d_ff` | 1536 |
+| `n_layers` | 4 |
+| `vocab_size` | 10,000 |
+| `dropout` | 0.1 |
+| `activation` | SwiGLU |
+| `positional_enc` | Sinusoidal |
+| `weight_tying` | ✅ |
+| `xavier_init` | ✅ |
+| `qk_norm` | ✅ |
+| `learning_rate` | 0.0026 |
+| `warmup` | 15% |
+| `epochs` | 100 |
+
+---
+
+## Repository Structure
 
 ```
-.
-├── __init__.py
-├── model_format_checker.py  # Utility to check model output format
-├── run_parta.sh             # Script to run Part A
-├── run_partb.sh             # Script to run Part B
-├── run_partc.sh             # Script to run Part C
-├── data/
-│   ├── tokenizer_corpus.txt # Corpus for tokenizer training
-│   ├── train.txt            # Training data for the language model
-│   └── valid.txt            # Validation data for the language model
+A2/
 ├── parta/
-│   ├── __init__.py
-│   ├── check.py             # Script to check Part A implementation
-│   └── model.py             # Your implementation for Part A goes here
- specific to Part A
+│   ├── model.py              # Transformer LM: attention, FFN, PE, collate_fn
+│   └── check.py              # Sanity checks for Part A
 ├── partb/
-│   ├── __init__.py
-│   ├── bpe_tokenizer.py     # Your implementation for BPE tokenizer goes here
-│   └── train_tokenizer.py   # Script to train the BPE tokenizer
-└── partc/
-    ├── __init__.py
-    ├── train_model.py       # Your implementation for model training goes here
-    └── utils.py             # Utility functions for Part C
+│   ├── bpe_tokenizer.py      # BPE tokenizer with Hindi-aware weighted merges
+│   ├── train_tokenizer.py    # Script to train and save the tokenizer
+│   ├── evaluate_tokenizer.py # Compression ratio & OOV rate evaluation
+│   └── final_tokenizer/      # Pre-trained tokenizer checkpoint (JSON)
+├── partc/
+│   ├── train_model.py        # Full training loop (AdamW, cosine LR, BPC eval)
+│   ├── utils.py              # TextDataset, collate_fn, BPC computation
+│   ├── optum.json            # Final (best) model config
+│   ├── baseline.json         # Baseline config for comparison
+│   └── final_model/          # Saved best model checkpoint
+├── data/
+│   ├── tokenizer_corpus.txt  # Corpus for BPE training
+│   ├── train.txt             # LM training data
+│   └── valid.txt             # LM validation data
+├── run_parta.sh
+├── run_partb.sh
+└── run_partc.sh
 ```
 
-## Setup Instructions
+---
 
-Read the assignment document carefully to implement this code into your private repository.
-**You are responsible for protecting your code.**
+## Running the Pipeline
 
-Once you have setup your private repository, fill up [this form](https://forms.office.com/r/MmSrhXrRn1).
-
-
-
-## Running the Assignment Parts
-
-Each part of the assignment can be run using a dedicated shell script. These scripts are designed to help you execute your code and test your implementations.
-
-### Part A: Data Preparation and Initial Model
-
-In this part, you will focus on implementing a basic model and data collating logic.
-
-To run Part A:
+### Part A — Model check
 ```bash
 bash run_parta.sh
 ```
-You will need to implement the necessary logic in `parta/model.py` and ensure `parta/check.py` passes.
 
-### Part B: BPE Tokenizer Implementation
-
-Part B involves implementing a Byte Pair Encoding (BPE) tokenizer from scratch or using a library.
-
-To run Part B:
+### Part B — Train BPE Tokenizer
 ```bash
-bash run_partb.sh
+bash run_partc.sh --train-tokenizer
+# Trains on ./data/hindi_mid_corpus.txt
+# Saves to ./partb/final_tokenizer/
 ```
-Your BPE tokenizer implementation will go into `partb/bpe_tokenizer.py`. The `partb/train_tokenizer.py` script will use your implementation to train a tokenizer on `data/tokenizer_corpus.txt`.
 
-### Part C: Training the Language Model
-
-In Part C, you will integrate your tokenizer and implement the training loop for a language model.
-
-To run Part C:
+Or directly:
 ```bash
-bash /run_partc.sh --train-tokenizer|--train-model
+python -m partb.train_tokenizer \
+  --input_corpus_path ./data/hindi_mid_corpus.txt \
+  --train_path ./data/train.txt \
+  --output_tokenizer_path ./partb/final_tokenizer/ \
+  --vocab_size 10000
 ```
-The core training logic will reside in `partc/train_model.py`.
 
-## Important Notes
+### Part C — Train Language Model
+```bash
+bash run_partc.sh --train-model
+# Trains on ./data/hindi_mid_corpus.txt
+# Validates on ./data/valid_mid_corpus.txt
+# Saves best checkpoint to ./partc/final_model/best_model.pt
+```
 
-*   **Read the problem statement carefully:** Before starting any part, make sure you thoroughly understand the requirements and expectations.
-*   **Incremental Development:** Work on one part at a time. Test your code frequently.
-*   **Use the provided data:** The `data/` directory contains the necessary text files for training your tokenizer and language model.
-*   **Check scripts:** The `run_part*.sh` scripts and `check.py` files are crucial for verifying your implementation. Make sure your code runs correctly through these scripts.
-*   **Code Style:** Maintain clean, readable, and well-commented code.
+Or directly:
+```bash
+python -m partc.train_model \
+  --train_path ./data/hindi_mid_corpus.txt \
+  --valid_path ./data/valid_mid_corpus.txt \
+  --tokenizer_path ./partb/final_tokenizer/ \
+  --output_model_path ./partc/final_model/
+```
 
-## Queries and Forum
+---
 
-All queries and discussion related to the assignment must be done on Piazza. Any direct messages/emails to TAs will not be entertained.
+## Dependencies
 
-----
+```
+torch
+tqdm
+```
 
-Good luck with the assignment! We hope you find this a rewarding learning experience.
